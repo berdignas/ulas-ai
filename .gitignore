@@ -36,6 +36,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# database lokal
+/data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+testsprite_tests/tmp/
+testsprite_tests/tmp/config.json

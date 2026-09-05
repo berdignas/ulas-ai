@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ulas AI — Analisis Sentimen Ulasan
 
-## Getting Started
+Aplikasi web untuk mengubah ulasan Google Maps menjadi insight terstruktur: proporsi sentimen
+(positif/netral/negatif), aspek layanan yang perlu diperbaiki dan dipertahankan, serta tren antar periode.
 
-First, run the development server:
+## Fitur
+
+- **Unggah Data** — impor file CSV atau Excel berisi ulasan Google Maps; kolom (nama, rating, teks,
+  tanggal) dikenali otomatis, termasuk header berbahasa Indonesia dan format Google Takeout.
+- **Dashboard Sentimen** — rekap jumlah, grafik proporsi sentimen, dan kalimat kondisi umum layanan.
+- **Daftar Ulasan** — telusuri, saring berdasarkan sentimen, dan cari berdasarkan kata kunci.
+- **Analisis Aspek** — aspek yang paling banyak dikeluhkan (perlu diperbaiki) dan dipuji (dipertahankan).
+- **Pemantauan Tren** — riwayat analisis, perbandingan dua periode, dan grafik tren sentimen.
+
+## Teknologi
+
+Next.js (App Router), React, Tailwind CSS, shadcn/ui, Drizzle ORM + SQLite (better-sqlite3),
+papaparse + xlsx untuk parsing berkas, recharts untuk grafik, dan OpenRouter sebagai AI Gateway.
+
+## Menjalankan
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Database SQLite dibuat otomatis di folder `data/` saat pertama kali dijalankan.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Konfigurasi AI
 
-## Learn More
+Salin `.env.example` menjadi `.env` lalu isi kunci API OpenCode Zen (gratis):
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+OPENCODE_ZEN_API_KEY=...
+OPENCODE_ZEN_MODEL=big-pickle   # opsional, model gratis
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Dapatkan kunci di https://opencode.ai/auth — model gratis tersedia di Zen
+(big-pickle, mimo-v2.5-free, ling-3.0-flash-fin-free, nemotron-3-ultra-free).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Dengan kunci AI**: setiap ulasan dianalisis oleh AI untuk menentukan sentimen sekaligus
+  mengenali aspek layanan (pelayanan, kebersihan, harga, dll).
+- **Tanpa kunci AI**: aplikasi tetap berjalan; sentimen ditentukan dari rating bintang sebagai
+  fallback (4-5 positif, 1-2 negatif, 3 netral), dan analisis aspek tidak tersedia.
 
-## Deploy on Vercel
+## Struktur Utama
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Path                    | Isi                                            |
+| ----------------------- | ---------------------------------------------- |
+| `app/`                  | Halaman (dashboard, unggah, ulasan, aspek, tren) |
+| `app/api/`              | Route handler (upload, proses, status, data)   |
+| `lib/db/`               | Skema dan koneksi Drizzle + SQLite             |
+| `lib/parser.ts`         | Parsing CSV/Excel + deteksi kolom otomatis     |
+| `lib/ai.ts`             | Pemanggilan OpenRouter + retry + fallback      |
+| `lib/analyzer.ts`       | Pipeline analisis sentimen & aspek             |
+| `components/`           | Komponen UI (shadcn/ui + kustom)               |
