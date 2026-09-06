@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { and, eq, like, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { ulasan } from "@/lib/db/schema";
+import { supabase, toCamel } from "@/lib/db";
+import { ulasan, UlasanRow } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 
@@ -20,28 +19,43 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const halaman = Math.max(1, Number(url.searchParams.get("page") ?? "1") || 1);
   const perHalaman = Math.min(100, Math.max(10, Number(url.searchParams.get("limit") ?? "20") || 20));
 
-  const kondisi = [eq(ulasan.analisisId, analisisId)];
+  let query = supabase.from(ulasan).select("*", { count: "exact" }).eq("analisis_id", analisisId);
+
+  const dari = url.searchParams.get("dari");
+  const sampai = url.searchParams.get("sampai");
+
+  if (dari) {
+    const tglDari = new Date(dari);
+    tglDari.setHours(0, 0, 0, 0);
+    query = query.gte("tanggal_ulasan", tglDari.toISOString());
+  }
+
+  if (sampai) {
+    const tglSampai = new Date(sampai);
+    tglSampai.setHours(23, 59, 59, 999);
+    query = query.lte("tanggal_ulasan", tglSampai.toISOString());
+  }
+
   if (sentimen && SENTIMEN_VALID.includes(sentimen as typeof SENTIMEN_VALID[number])) {
-    kondisi.push(eq(ulasan.sentimen, sentimen as typeof SENTIMEN_VALID[number]));
+    query = query.eq("sentimen", sentimen);
   }
   if (kataKunci) {
-    kondisi.push(like(ulasan.teksUlasan, `%${kataKunci}%`));
+    query = query.ilike("teks_ulasan", `%${kataKunci}%`);
   }
-  const whereKondisi = and(...kondisi);
 
-  const totalRows = await db
-    .select({ jumlah: sql<number>`count(*)` })
-    .from(ulasan)
-    .where(whereKondisi);
-  const total = totalRows[0]?.jumlah ?? 0;
+  const fromIndex = (halaman - 1) * perHalaman;
+  const toIndex = fromIndex + perHalaman - 1;
 
-  const daftar = await db
-    .select()
-    .from(ulasan)
-    .where(whereKondisi)
-    .orderBy(sql`${ulasan.id}`)
-    .limit(perHalaman)
-    .offset((halaman - 1) * perHalaman);
+  const { data: listRaw, count, error } = await query
+    .order("tanggal_ulasan", { ascending: false })
+    .range(fromIndex, toIndex);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const daftar = toCamel<UlasanRow[]>(listRaw ?? []);
+  const total = count ?? 0;
 
   return NextResponse.json({
     ulasan: daftar,

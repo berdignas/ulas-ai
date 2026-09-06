@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { analisis, ulasan } from "@/lib/db/schema";
+import { supabase, toCamel } from "@/lib/db";
+import { analisis, ulasan, AnalisisRow } from "@/lib/db/schema";
 import { hapusAspekYatim, prosesSedangBerjalan } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
@@ -13,21 +12,21 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "ID tidak valid." }, { status: 400 });
   }
 
-  const itemRows = await db.select().from(analisis).where(eq(analisis.id, analisisId)).limit(1);
-  const item = itemRows[0];
+  const { data: itemRowsRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
+  const item = toCamel<AnalisisRow>(itemRowsRaw?.[0]);
   if (!item) {
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
-  const totalTerlabelRows = await db
-    .select({ jumlah: sql<number>`count(*)` })
+  const { count: totalTerlabel } = await supabase
     .from(ulasan)
-    .where(sql`${ulasan.analisisId} = ${analisisId} AND ${ulasan.sentimen} IS NOT NULL`);
-  const totalTerlabel = totalTerlabelRows[0]?.jumlah ?? 0;
+    .select("*", { count: "exact", head: true })
+    .eq("analisis_id", analisisId)
+    .not("sentimen", "is", null);
 
   return NextResponse.json({
     analisis: item,
-    totalTerlabel,
+    totalTerlabel: totalTerlabel ?? 0,
   });
 }
 
@@ -38,8 +37,8 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     return NextResponse.json({ error: "ID tidak valid." }, { status: 400 });
   }
 
-  const itemRows = await db.select().from(analisis).where(eq(analisis.id, analisisId)).limit(1);
-  const item = itemRows[0];
+  const { data: itemRowsRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
+  const item = toCamel<AnalisisRow>(itemRowsRaw?.[0]);
   if (!item) {
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
@@ -52,7 +51,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     );
   }
 
-  await db.delete(analisis).where(eq(analisis.id, analisisId));
-  hapusAspekYatim();
+  await supabase.from(analisis).delete().eq("id", analisisId);
+  await hapusAspekYatim();
   return NextResponse.json({ terhapus: true });
 }

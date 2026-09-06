@@ -1,6 +1,5 @@
-import { eq, inArray, sql } from "drizzle-orm";
-import { db } from "./db";
-import { analisis, aspek, hasilAspekUlasan, ulasan } from "./db/schema";
+import { supabase, toCamel, toSnake } from "./db";
+import { analisis, aspek, hasilAspekUlasan, ulasan, UlasanRow, AnalisisRow, AspekRow } from "./db/schema";
 import {
   aiConfigured,
   analisisUlasanDenganAI,
@@ -27,10 +26,13 @@ export function hentikanProsesAnalisis(analisisId: number): boolean {
 }
 
 export async function hapusAspekYatim(): Promise<void> {
-  await db.delete(aspek)
-    .where(
-      sql`not exists (select 1 from ${hasilAspekUlasan} where ${hasilAspekUlasan.aspekId} = ${aspek.id})`
-    );
+  const { data: usedRaw } = await supabase.from(hasilAspekUlasan).select("aspek_id");
+  const usedIds = Array.from(new Set((usedRaw ?? []).map((r) => r.aspek_id)));
+  if (usedIds.length === 0) {
+    await supabase.from(aspek).delete().neq("id", 0);
+  } else {
+    await supabase.from(aspek).delete().not("id", "in", `(${usedIds.join(",")})`);
+  }
 }
 
 export function mulaiProsesAnalisis(analisisId: number): boolean {
@@ -44,77 +46,99 @@ export function mulaiProsesAnalisis(analisisId: number): boolean {
   return true;
 }
 
-const CONCURRENCY = 3;
+const CONCURRENCY = 1;
 
 async function prosesAnalisis(analisisId: number): Promise<void> {
   try {
-    await db.update(analisis)
-      .set({ status: "berjalan", catatan: null, kondisiUmum: null })
-      .where(eq(analisis.id, analisisId));
+    await supabase.from(analisis)
+      .update(toSnake({ status: "berjalan", catatan: null, kondisiUmum: null }))
+      .eq("id", analisisId);
 
-    const daftarUlasan = await db.select().from(ulasan).where(eq(ulasan.analisisId, analisisId));
+    const { data: daftarUlasanRaw } = await supabase.from(ulasan).select("*").eq("analisis_id", analisisId);
+    const daftarUlasan = toCamel<UlasanRow[]>(daftarUlasanRaw ?? []);
 
-    const idUlasan = daftarUlasan.map((u) => u.id);
-    if (idUlasan.length > 0) {
-      await db.delete(hasilAspekUlasan).where(inArray(hasilAspekUlasan.ulasanId, idUlasan));
-      await db.update(ulasan)
-        .set({ sentimen: null, sumberLabel: null })
-        .where(inArray(ulasan.id, idUlasan));
+    const belumDiproses = daftarUlasan.filter((u) => u.sumberLabel !== "ai");
+    const sudahDiproses = daftarUlasan.filter((u) => u.sumberLabel === "ai");
+
+    const idBelum = belumDiproses.map((u) => u.id);
+    if (idBelum.length > 0) {
+      await supabase.from(hasilAspekUlasan).delete().in("ulasan_id", idBelum);
+      await supabase.from(ulasan)
+        .update(toSnake({ sentimen: null, sumberLabel: null }))
+        .in("id", idBelum);
     }
 
-    await db.update(analisis)
-      .set({ totalUlasan: daftarUlasan.length, ulasanDiproses: 0 })
-      .where(eq(analisis.id, analisisId));
+    let ulasanDiprosesCounter = sudahDiproses.length;
+    await supabase.from(analisis)
+      .update(toSnake({ totalUlasan: daftarUlasan.length, ulasanDiproses: ulasanDiprosesCounter }))
+      .eq("id", analisisId);
 
     let gagalDilabel = 0;
     let gagalAI = 0;
-    let pakaiAI = false;
+    let pakaiAI = sudahDiproses.length > 0;
     const cacheAspek = new Map<string, number>();
 
-    const prosesSatuUlasan = async (item: (typeof daftarUlasan)[number]) => {
+    const prosesSatuUlasan = async (item: UlasanRow) => {
       let sentimen: string | null = null;
       let sumberLabel: string | null = null;
+      let unitLayanan: string = "Lainnya";
+      let kategoriMasalah: string = "Lainnya";
+      let faktorUrgensiMedis: boolean = false;
+      let saranDrafBalasan: string | null = null;
 
       if (aiConfigured()) {
         try {
-          const hasil = await analisisUlasanDenganAI(item.teksUlasan, item.rating);
+          const hasil = await analisisUlasanDenganAI(item.teksUlasan, item.rating ?? null);
           sentimen = hasil.sentimen;
           sumberLabel = "ai";
+          unitLayanan = hasil.unitLayanan;
+          kategoriMasalah = hasil.kategoriMasalah;
+          faktorUrgensiMedis = hasil.faktorUrgensiMedis;
+          saranDrafBalasan = hasil.saranDrafBalasan;
           pakaiAI = true;
 
           for (const itemAspek of hasil.aspek) {
             const aspekId = await dapatkanAspekId(itemAspek.aspek, cacheAspek);
-            await db.insert(hasilAspekUlasan)
-              .values({
+            await supabase.from(hasilAspekUlasan)
+              .insert(toSnake({
                 ulasanId: item.id,
                 aspekId,
                 sentimenAspek: itemAspek.sentimen,
                 kutipan: itemAspek.kutipan,
-              });
+              }));
           }
         } catch (errorAI) {
           gagalAI++;
           console.warn(`[ai] ulasan ${item.id} gagal: ${errorAI instanceof Error ? errorAI.message : String(errorAI)}`);
-          sentimen = sentimenFallbackDariRating(item.rating);
+          sentimen = sentimenFallbackDariRating(item.rating ?? null);
           sumberLabel = sentimen ? "rating" : null;
           if (!sentimen) gagalDilabel++;
         }
       } else {
-        sentimen = sentimenFallbackDariRating(item.rating);
+        sentimen = sentimenFallbackDariRating(item.rating ?? null);
         sumberLabel = sentimen ? "rating" : null;
         if (!sentimen) gagalDilabel++;
       }
 
-      await db.update(ulasan)
-        .set({ sentimen: sentimen as "positif" | "negatif" | "netral" | null, sumberLabel })
-        .where(eq(ulasan.id, item.id));
+      await supabase.from(ulasan)
+        .update(toSnake({
+          sentimen,
+          sumberLabel,
+          unitLayanan,
+          kategoriMasalah,
+          faktorUrgensiMedis,
+          saranDrafBalasan,
+          diperbaruiPada: new Date().toISOString(),
+        }))
+        .eq("id", item.id);
 
-      await db.update(analisis)
-        .set({ ulasanDiproses: sql`${analisis.ulasanDiproses} + 1` })
-        .where(eq(analisis.id, analisisId));
+      ulasanDiprosesCounter++;
+      await supabase.from(analisis)
+        .update(toSnake({ ulasanDiproses: ulasanDiprosesCounter }))
+        .eq("id", analisisId);
     };
 
-    const antrean = [...daftarUlasan];
+    const antrean = [...belumDiproses];
     const pekerja = Array.from({ length: Math.min(CONCURRENCY, antrean.length) }, async () => {
       while (antrean.length > 0) {
         if (stopRequests.has(analisisId)) return;
@@ -126,35 +150,37 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     await Promise.all(pekerja);
 
     if (stopRequests.has(analisisId)) {
-      const terkiniRows = await db.select().from(analisis).where(eq(analisis.id, analisisId)).limit(1);
-      const terkini = terkiniRows[0];
-      await db.update(analisis)
-        .set({
+      const { data: terkiniRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
+      const terkini = toCamel<AnalisisRow>(terkiniRaw?.[0]);
+      await supabase.from(analisis)
+        .update(toSnake({
           status: "berhenti",
           catatan: `Analisis dihentikan setelah ${terkini?.ulasanDiproses ?? 0} dari ${daftarUlasan.length} ulasan diproses. Proses ulang untuk melanjutkan.`,
-        })
-        .where(eq(analisis.id, analisisId));
+        }))
+        .eq("id", analisisId);
       return;
     }
 
     const totalUlasan = daftarUlasan.length;
 
-    const totalPositifRows = await db
-      .select({ jumlah: sql<number>`count(*)` })
-      .from(ulasan)
-      .where(sql`${ulasan.analisisId} = ${analisisId} AND ${ulasan.sentimen} = 'positif'`);
-    const totalNegatifRows = await db
-      .select({ jumlah: sql<number>`count(*)` })
-      .from(ulasan)
-      .where(sql`${ulasan.analisisId} = ${analisisId} AND ${ulasan.sentimen} = 'negatif'`);
-    const totalNetralRows = await db
-      .select({ jumlah: sql<number>`count(*)` })
-      .from(ulasan)
-      .where(sql`${ulasan.analisisId} = ${analisisId} AND ${ulasan.sentimen} = 'netral'`);
+    const { count: jumlahPositif } = await supabase.from(ulasan)
+      .select("*", { count: "exact", head: true })
+      .eq("analisis_id", analisisId)
+      .eq("sentimen", "positif");
 
-    const jumlahPositif = totalPositifRows[0]?.jumlah ?? 0;
-    const jumlahNegatif = totalNegatifRows[0]?.jumlah ?? 0;
-    const jumlahNetral = totalNetralRows[0]?.jumlah ?? 0;
+    const { count: jumlahNegatif } = await supabase.from(ulasan)
+      .select("*", { count: "exact", head: true })
+      .eq("analisis_id", analisisId)
+      .eq("sentimen", "negatif");
+
+    const { count: jumlahNetral } = await supabase.from(ulasan)
+      .select("*", { count: "exact", head: true })
+      .eq("analisis_id", analisisId)
+      .eq("sentimen", "netral");
+
+    const posCount = jumlahPositif ?? 0;
+    const negCount = jumlahNegatif ?? 0;
+    const netCount = jumlahNetral ?? 0;
 
     const aspekStatistik = await dapatkanStatistikAspek(analisisId);
     const aspekKeluhanTeratas = aspekStatistik
@@ -170,9 +196,9 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
 
     const stats = {
       totalUlasan,
-      totalPositif: jumlahPositif,
-      totalNegatif: jumlahNegatif,
-      totalNetral: jumlahNetral,
+      totalPositif: posCount,
+      totalNegatif: negCount,
+      totalNetral: netCount,
       aspekKeluhanTeratas,
       aspekPujianTeratas,
     };
@@ -191,22 +217,22 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
       catatan.push(`${gagalDilabel} ulasan tidak dapat diberi label sentimen (tidak ada rating dan AI gagal).`);
     }
 
-    await db.update(analisis)
-      .set({
+    await supabase.from(analisis)
+      .update(toSnake({
         status: "selesai",
         totalUlasan,
-        totalPositif: jumlahPositif,
-        totalNegatif: jumlahNegatif,
-        totalNetral: jumlahNetral,
+        totalPositif: posCount,
+        totalNegatif: negCount,
+        totalNetral: netCount,
         kondisiUmum,
         catatan: catatan.length > 0 ? catatan.join(" ") : null,
-      })
-      .where(eq(analisis.id, analisisId));
+      }))
+      .eq("id", analisisId);
   } catch (error) {
     const pesan = error instanceof Error ? error.message : "Kesalahan tidak diketahui";
-    await db.update(analisis)
-      .set({ status: "gagal", catatan: `Proses analisis gagal: ${pesan}` })
-      .where(eq(analisis.id, analisisId));
+    await supabase.from(analisis)
+      .update(toSnake({ status: "gagal", catatan: `Proses analisis gagal: ${pesan}` }))
+      .eq("id", analisisId);
   }
 }
 
@@ -215,16 +241,28 @@ async function dapatkanAspekId(namaAspek: string, cache: Map<string, number>): P
   const cached = cache.get(kunci);
   if (cached !== undefined) return cached;
 
-  const existingRows = await db.select().from(aspek).where(eq(aspek.namaAspek, kunci)).limit(1);
-  const existing = existingRows[0];
+  const { data: existingRows } = await supabase.from(aspek).select("*").eq("nama_aspek", kunci).limit(1);
+  const existing = toCamel<AspekRow>(existingRows?.[0]);
   if (existing) {
     cache.set(kunci, existing.id);
     return existing.id;
   }
-  const insertedRows = await db.insert(aspek).values({ namaAspek: kunci }).returning({ id: aspek.id });
-  const inserted = insertedRows[0];
-  cache.set(kunci, inserted.id);
-  return inserted.id;
+  const { data: insertedRows } = await supabase.from(aspek).insert({ nama_aspek: kunci }).select("id");
+  const inserted = insertedRows?.[0];
+  if (inserted?.id) {
+    cache.set(kunci, inserted.id);
+    return inserted.id;
+  }
+
+  // Fallback in case of race condition
+  const { data: retryRows } = await supabase.from(aspek).select("*").eq("nama_aspek", kunci).limit(1);
+  const retryExisting = toCamel<AspekRow>(retryRows?.[0]);
+  if (retryExisting?.id) {
+    cache.set(kunci, retryExisting.id);
+    return retryExisting.id;
+  }
+
+  throw new Error("Gagal menyimpan aspek: " + kunci);
 }
 
 export interface StatistikAspek {
@@ -235,26 +273,49 @@ export interface StatistikAspek {
   netral: number;
 }
 
-export async function dapatkanStatistikAspek(analisisId: number): Promise<StatistikAspek[]> {
-  const rows = await db
-    .select({
-      id: aspek.id,
-      namaAspek: aspek.namaAspek,
-      positif: sql<number>`sum(case when ${hasilAspekUlasan.sentimenAspek} = 'positif' then 1 else 0 end)`,
-      negatif: sql<number>`sum(case when ${hasilAspekUlasan.sentimenAspek} = 'negatif' then 1 else 0 end)`,
-      netral: sql<number>`sum(case when ${hasilAspekUlasan.sentimenAspek} = 'netral' then 1 else 0 end)`,
-    })
-    .from(hasilAspekUlasan)
-    .innerJoin(aspek, eq(hasilAspekUlasan.aspekId, aspek.id))
-    .innerJoin(ulasan, eq(hasilAspekUlasan.ulasanId, ulasan.id))
-    .where(eq(ulasan.analisisId, analisisId))
-    .groupBy(aspek.id, aspek.namaAspek);
+export async function dapatkanStatistikAspek(
+  analisisId: number,
+  dari?: string | null,
+  sampai?: string | null
+): Promise<StatistikAspek[]> {
+  let query = supabase.from(hasilAspekUlasan)
+    .select("sentimen_aspek, aspek(id, nama_aspek), ulasan!inner(analisis_id, tanggal_ulasan)")
+    .eq("ulasan.analisis_id", analisisId);
 
-  return rows.map((row) => ({
-    id: row.id,
-    namaAspek: row.namaAspek,
-    positif: row.positif ?? 0,
-    negatif: row.negatif ?? 0,
-    netral: row.netral ?? 0,
-  }));
+  if (dari) {
+    const tglDari = new Date(dari);
+    tglDari.setHours(0, 0, 0, 0);
+    query = query.gte("ulasan.tanggal_ulasan", tglDari.toISOString());
+  }
+
+  if (sampai) {
+    const tglSampai = new Date(sampai);
+    tglSampai.setHours(23, 59, 59, 999);
+    query = query.lte("ulasan.tanggal_ulasan", tglSampai.toISOString());
+  }
+
+  const { data: hasilRaw } = await query;
+
+  const mapStats = new Map<number, StatistikAspek>();
+
+  if (hasilRaw) {
+    for (const item of hasilRaw as any[]) {
+      const asp = item.aspek;
+      if (!asp) continue;
+      const id = asp.id;
+      const namaAspek = asp.nama_aspek;
+      const sentimen = item.sentimen_aspek;
+
+      if (!mapStats.has(id)) {
+        mapStats.set(id, { id, namaAspek, positif: 0, negatif: 0, netral: 0 });
+      }
+
+      const st = mapStats.get(id)!;
+      if (sentimen === "positif") st.positif++;
+      else if (sentimen === "negatif") st.negatif++;
+      else if (sentimen === "netral") st.netral++;
+    }
+  }
+
+  return Array.from(mapStats.values());
 }

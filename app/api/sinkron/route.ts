@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { rumahSakit } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { supabase, toCamel } from "@/lib/db";
+import { rumahSakit, RumahSakitRow } from "@/lib/db/schema";
 import { jalankanSinkronHarian, ambilRiwayatSinkron } from "@/lib/apify";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { rumahSakitId, tipePemicu } = body;
+  const { rumahSakitId, tipePemicu, periode } = body;
   if (!rumahSakitId) return NextResponse.json({ error: "rumahSakitId wajib" }, { status: 400 });
 
-  const rs = await db.select().from(rumahSakit).where(eq(rumahSakit.id, rumahSakitId)).limit(1);
+  const { data: rsRaw } = await supabase.from(rumahSakit).select("*").eq("id", rumahSakitId).limit(1);
+  const rs = toCamel<RumahSakitRow[]>(rsRaw ?? []);
   if (!rs.length) return NextResponse.json({ error: "Rumah sakit tidak ditemukan" }, { status: 404 });
 
-  const hasil = await jalankanSinkronHarian(rumahSakitId, tipePemicu ?? "manual");
+  const hasil = await jalankanSinkronHarian(rumahSakitId, tipePemicu ?? "manual", periode ?? "1d");
   return NextResponse.json(hasil);
 }
 

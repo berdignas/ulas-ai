@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { analisis } from "@/lib/db/schema";
+import { supabase, toCamel } from "@/lib/db";
+import { analisis, AnalisisRow } from "@/lib/db/schema";
 import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 import { aiConfigured } from "@/lib/ai";
 
@@ -14,8 +13,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "ID tidak valid." }, { status: 400 });
   }
 
-  const itemRows = await db.select().from(analisis).where(eq(analisis.id, analisisId)).limit(1);
-  const item = itemRows[0];
+  const { data: itemRowsRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
+  const item = toCamel<AnalisisRow>(itemRowsRaw?.[0]);
   if (!item) {
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }

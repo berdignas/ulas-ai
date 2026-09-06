@@ -41,8 +41,8 @@
 }
 
 @theme inline {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: var(--font-poppins), "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Code", monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -125,3 +125,45 @@
   background-size: 200% 100%;
   animation: shimmer 1.6s linear infinite;
 }
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(0.6deg);
+  }
+}
+
+.animate-float-slow {
+  animation: floatSlow 4.5s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 16px rgba(6, 182, 212, 0.45)) drop-shadow(0 0 32px rgba(56, 189, 248, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 30px rgba(6, 182, 212, 0.85)) drop-shadow(0 0 60px rgba(14, 165, 233, 0.6));
+  }
+}
+
+.animate-glow-pulse {
+  animation: glowPulse 3s ease-in-out infinite;
+}
+
+@keyframes shadowPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(0.86);
+    opacity: 0.18;
+  }
+}
+
+.animate-shadow-pulse {
+  animation: shadowPulse 4.5s ease-in-out infinite;
+}
+

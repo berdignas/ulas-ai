@@ -1,8 +1,22 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { ulasan, rumahSakit } from "@/lib/db/schema";
-import { eq, and, gte, lt, desc } from "drizzle-orm";
+import { supabase, toCamel } from "@/lib/db";
+import { ulasan, rumahSakit, UlasanRow, RumahSakitRow } from "@/lib/db/schema";
 import * as XLSX from "xlsx";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  Table,
+  TableRow,
+  TableCell,
+  TextRun,
+  ImageRun,
+  HeadingLevel,
+  AlignmentType,
+  WidthType,
+  BorderStyle,
+  PageOrientation,
+} from "docx";
 
 export const runtime = "nodejs";
 
@@ -15,56 +29,73 @@ function escapeCsv(value: string | number | null | undefined): string {
   return str;
 }
 
-function generateCsv(rows: Record<string, unknown>[], headers: string[]): string {
-  const headerLine = headers.join(",");
-  const dataLines = rows.map((row) => headers.map((h) => escapeCsv(String(row[h] ?? ""))).join(","));
-  return [headerLine, ...dataLines].join("\n");
-}
-
 function generateXlsx(rows: Record<string, unknown>[], sheetName: string = "Laporan"): Blob {
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = { Sheets: { [sheetName]: worksheet }, SheetNames: [sheetName] };
   const buf = XLSX.write(workbook, { bookType: "xlsx", bookSST: false });
   const data = new Uint8Array(buf);
-  return new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8" });
+  return new Blob([data], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8",
+  });
 }
 
-function generateHtmlReport(rs: { nama: string; kode: string }, rows: Record<string, unknown>[], periode: { dari: string; sampai: string }): string {
+function generateHtmlReport(
+  rs: { nama: string; kode: string },
+  rows: Record<string, unknown>[],
+  periode: { dari: string; sampai: string },
+  kopSuratBase64: string | null
+): string {
   const tglDari = new Date(periode.dari).toLocaleDateString("id-ID");
   const tglSampai = new Date(periode.sampai).toLocaleDateString("id-ID");
 
-  const rowsHtml = rows.map((r) => `
+  const kopHtml = kopSuratBase64
+    ? `<div style="width:100%;text-align:center;margin-bottom:14px;">
+        <img src="data:image/png;base64,${kopSuratBase64}" style="width:100%;max-height:150px;object-fit:contain;display:block;margin:0 auto;" alt="Kop Surat"/>
+      </div>
+      <hr style="border:none;border-top:2px solid #222;margin:10px 0 18px 0;">`
+    : "";
+
+  const rowsHtml = rows
+    .map(
+      (r) => `
     <tr>
-      <td>${escapeHtml(String(r.tanggalUlasan ?? ""))}</td>
-      <td>${escapeHtml(String(r.namaPengulas ?? ""))}</td>
-      <td style="text-align:center">${escapeHtml(String(r.rating ?? ""))}</td>
-      <td>${escapeHtml(String(r.teksUlasan ?? "")).slice(0, 200)}</td>
-      <td>${escapeHtml(String(r.unitLayanan ?? ""))}</td>
-      <td>${escapeHtml(String(r.kategoriMasalah ?? ""))}</td>
-      <td>${escapeHtml(String(r.sentimen ?? ""))}</td>
-      <td>${escapeHtml(String(r.statusTindakLanjut ?? ""))}</td>
+      <td>${String(r.tanggalUlasan ?? "")}</td>
+      <td>${String(r.namaPengulas ?? "")}</td>
+      <td style="text-align:center">${String(r.rating ?? "")}</td>
+      <td>${String(r.teksUlasan ?? "").slice(0, 200)}</td>
+      <td>${String(r.unitLayanan ?? "")}</td>
+      <td>${String(r.kategoriMasalah ?? "")}</td>
+      <td>${String(r.sentimen ?? "")}</td>
+      <td>${String(r.statusTindakLanjut ?? "")}</td>
     </tr>
-  `).join("");
+  `
+    )
+    .join("");
 
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Laporan Mutu - ${escapeHtml(rs.nama)}</title>
+  <title>Laporan Mutu - ${rs.nama}</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; font-size: 11px; }
-    h1 { text-align: center; margin-bottom: 5px; }
-    .meta { text-align: center; color: #666; margin-bottom: 20px; font-size: 10px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ddd; padding: 4px; text-align: left; }
-    th { background: #f5f5f5; font-weight: bold; }
+    @page { size: A4 portrait; margin: 12mm 12mm 15mm 12mm; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; font-size: 11px; color: #111; }
+    h1 { text-align: center; margin-bottom: 4px; font-size: 15px; font-weight: 700; }
+    .meta { text-align: center; color: #555; margin-bottom: 20px; font-size: 11px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }
+    th { background: #f0f0f0; font-weight: 600; font-size: 10.5px; }
     tr:nth-child(even) { background: #fafafa; }
-    @page { margin: 15mm; }
+    @media print {
+      body { margin: 0; }
+      @page { size: portrait; }
+    }
   </style>
 </head>
 <body>
-  <h1>Laporan Mutu Ulasan Google Maps</h1>
-  <div class="meta">${escapeHtml(rs.nama)} | Periode: ${tglDari} - ${tglSampai} | Dicetak: ${new Date().toLocaleString("id-ID")}</div>
+  ${kopHtml}
+  <h1>Laporan Mutu Ulasan Layanan</h1>
+  <div class="meta">${rs.nama} | Periode: ${tglDari} — ${tglSampai} | Dicetak: ${new Date().toLocaleString("id-ID")}</div>
   <table>
     <thead>
       <tr>
@@ -78,105 +109,258 @@ function generateHtmlReport(rs: { nama: string; kode: string }, rows: Record<str
 </html>`;
 }
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&#38;")
-    .replace(/</g, "&#60;")
-    .replace(/>/g, "&#62;")
-    .replace(/"/g, "&#34;")
-    .replace(/'/g, "'");
+async function generateDocx(
+  rs: { nama: string; kode: string },
+  rows: Record<string, unknown>[],
+  periode: { dari: string; sampai: string },
+  kopSuratBase64: string | null
+): Promise<Buffer> {
+  const tglDari = new Date(periode.dari).toLocaleDateString("id-ID");
+  const tglSampai = new Date(periode.sampai).toLocaleDateString("id-ID");
+
+  const TABLE_HEADERS = ["Tanggal", "Reviewer", "Rating", "Ulasan", "Unit", "Kategori", "Sentimen", "Status"];
+  const ROW_KEYS = [
+    "tanggalUlasan",
+    "namaPengulas",
+    "rating",
+    "teksUlasan",
+    "unitLayanan",
+    "kategoriMasalah",
+    "sentimen",
+    "statusTindakLanjut",
+  ] as const;
+
+  const headerRow = new TableRow({
+    children: TABLE_HEADERS.map(
+      (h) =>
+        new TableCell({
+          shading: { fill: "F5F5F5" },
+          width: { size: 100 / TABLE_HEADERS.length, type: WidthType.PERCENTAGE },
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: h, bold: true, size: 18 })],
+            }),
+          ],
+        })
+    ),
+  });
+
+  const dataRows = rows.map(
+    (r) =>
+      new TableRow({
+        children: ROW_KEYS.map(
+          (k) =>
+            new TableCell({
+              width: { size: 100 / TABLE_HEADERS.length, type: WidthType.PERCENTAGE },
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: String(r[k] ?? "").slice(0, 200),
+                      size: 16,
+                    }),
+                  ],
+                }),
+              ],
+            })
+        ),
+      })
+  );
+
+  const kopParagraph: Paragraph[] = [];
+  if (kopSuratBase64) {
+    const imgBuffer = Buffer.from(kopSuratBase64, "base64");
+    kopParagraph.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new ImageRun({
+            data: imgBuffer,
+            transformation: { width: 620, height: 110 },
+            type: "png",
+          }),
+        ],
+      }),
+      new Paragraph({ text: "" })
+    );
+  }
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            size: {
+              orientation: PageOrientation.PORTRAIT,
+            },
+            margin: {
+              top: 1000,
+              right: 1000,
+              bottom: 1000,
+              left: 1000,
+            },
+          },
+        },
+        children: [
+          ...kopParagraph,
+          new Paragraph({
+            text: "Laporan Mutu Ulasan Layanan",
+            heading: HeadingLevel.HEADING_1,
+            alignment: AlignmentType.CENTER,
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({
+                text: `${rs.nama} | Periode: ${tglDari} — ${tglSampai}`,
+                size: 20,
+                color: "666666",
+              }),
+            ],
+          }),
+          new Paragraph({ text: "" }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [headerRow, ...dataRows],
+          }),
+          new Paragraph({ text: "" }),
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [
+              new TextRun({
+                text: `Dicetak: ${new Date().toLocaleString("id-ID")}`,
+                size: 16,
+                color: "999999",
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
+  });
+
+  return Packer.toBuffer(doc);
 }
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { rumahSakitId, format, dari, sampai, status } = body;
+  const { rumahSakitId, format, dari, sampai, status, kopSuratBase64 } = body;
 
   if (!rumahSakitId || !dari || !sampai) {
-    return NextResponse.json({ error: "Parameter rumahSakitId, dari, sampai wajib" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Parameter rumahSakitId, dari, dan sampai wajib diisi." },
+      { status: 400 }
+    );
   }
 
-  const rsRows = await db.select().from(rumahSakit).where(eq(rumahSakit.id, rumahSakitId)).limit(1);
-  const rs = rsRows[0];
-  if (!rs) return NextResponse.json({ error: "Rumah sakit tidak ditemukan" }, { status: 404 });
+  const rsId = Number(rumahSakitId);
+  const { data: rsRowsRaw } = await supabase
+    .from(rumahSakit)
+    .select("*")
+    .eq("id", rsId)
+    .limit(1);
+  const rs = toCamel<RumahSakitRow>(rsRowsRaw?.[0]);
+  if (!rs) {
+    return NextResponse.json({ error: "Rumah sakit tidak ditemukan." }, { status: 404 });
+  }
 
   const tglDari = new Date(dari);
   tglDari.setHours(0, 0, 0, 0);
   const tglSampai = new Date(sampai);
   tglSampai.setHours(23, 59, 59, 999);
 
-  const whereConditions = [
-    eq(ulasan.rumahSakitId, rumahSakitId),
-    gte(ulasan.tanggalUlasan, tglDari.toISOString()),
-    lt(ulasan.tanggalUlasan, tglSampai.toISOString()),
-  ];
+  let query = supabase
+    .from(ulasan)
+    .select("*")
+    .eq("rumah_sakit_id", rsId)
+    .gte("tanggal_ulasan", tglDari.toISOString())
+    .lt("tanggal_ulasan", tglSampai.toISOString());
 
   if (status && status !== "all") {
-    whereConditions.push(eq(ulasan.statusTindakLanjut, status));
+    query = query.eq("status_tindak_lanjut", status);
   }
 
-  const rows = await db.select({
-    tanggalUlasan: ulasan.tanggalUlasan,
-    namaPengulas: ulasan.namaPengulas,
-    rating: ulasan.rating,
-    teksUlasan: ulasan.teksUlasan,
-    unitLayanan: ulasan.unitLayanan,
-    kategoriMasalah: ulasan.kategoriMasalah,
-    sentimen: ulasan.sentimen,
-    statusTindakLanjut: ulasan.statusTindakLanjut,
-  }).from(ulasan)
-    .where(and(...whereConditions))
-    .orderBy(desc(ulasan.tanggalUlasan));
+  const { data: rowsRaw, error } = await query.order("tanggal_ulasan", { ascending: false });
 
-  // Map to records with Indonesian headers
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const rows = toCamel<UlasanRow[]>(rowsRaw ?? []);
+
   const records = rows.map((r) => ({
-    "Tanggal Ulasan": String(r.tanggalUlasan ?? ""),
-    "Nama Pengulas": String(r.namaPengulas ?? ""),
-    Rating: String(r.rating ?? ""),
-    "Teks Ulasan": String(r.teksUlasan ?? "").slice(0, 200),
-    "Unit Layanan": String(r.unitLayanan ?? ""),
-    "Kategori Masalah": String(r.kategoriMasalah ?? ""),
-    Sentimen: String(r.sentimen ?? ""),
-    "Status Tindak Lanjut": String(r.statusTindakLanjut ?? ""),
+    tanggalUlasan: String(r.tanggalUlasan ?? ""),
+    namaPengulas: String(r.namaPengulas ?? ""),
+    rating: String(r.rating ?? ""),
+    teksUlasan: String(r.teksUlasan ?? "").slice(0, 200),
+    unitLayanan: String(r.unitLayanan ?? ""),
+    kategoriMasalah: String(r.kategoriMasalah ?? ""),
+    sentimen: String(r.sentimen ?? ""),
+    statusTindakLanjut: String(r.statusTindakLanjut ?? ""),
   }));
 
-  if (format === "csv") {
-    const headers = ["Tanggal Ulasan", "Nama Pengulas", "Rating", "Teks Ulasan", "Unit Layanan", "Kategori Masalah", "Sentimen", "Status Tindak Lanjut"];
-    const csv = generateCsv(records, headers);
-    return new NextResponse(csv, {
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="laporan-mutu-${rs.kode}-${dari}-${sampai}.csv"`,
-      },
-    });
-  }
+  const namaFile = `laporan-mutu-${rs.kode}-${dari}-${sampai}`;
 
-  if (format === "xlsx") {
-    return new NextResponse(generateXlsx(records), {
-      headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8",
-        "Content-Disposition": `attachment; filename="laporan-mutu-${rs.kode}-${dari}-${sampai}.xlsx"`,
-      },
-    });
-  }
+  const effectiveKopSurat = kopSuratBase64 || rs.kopSurat || null;
 
-  if (format === "html") {
-    const html = generateHtmlReport(rs, records.map(r => ({
-      tanggalUlasan: r["Tanggal Ulasan"],
-      namaPengulas: r["Nama Pengulas"],
-      rating: r.Rating,
-      teksUlasan: r["Teks Ulasan"],
-      unitLayanan: r["Unit Layanan"],
-      kategoriMasalah: r["Kategori Masalah"],
-      sentimen: r.Sentimen,
-      statusTindakLanjut: r["Status Tindak Lanjut"],
-    })), { dari, sampai });
+  // ── PDF (HTML siap cetak) ─────────────────────────────────────
+  if (format === "pdf") {
+    const html = generateHtmlReport(
+      rs,
+      records,
+      { dari, sampai },
+      effectiveKopSurat
+    );
     return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Disposition": `inline; filename="laporan-mutu-${rs.kode}-${dari}-${sampai}.html"`,
+        "Content-Disposition": `inline; filename="${namaFile}.html"`,
       },
     });
   }
 
-  return NextResponse.json({ error: "Format tidak didukung. Gunakan: csv, xlsx, html" }, { status: 400 });
+  // ── Excel ─────────────────────────────────────────────────────
+  if (format === "xlsx") {
+    const xlsxRecords = records.map((r) => ({
+      "Tanggal Ulasan": r.tanggalUlasan,
+      "Nama Pengulas": r.namaPengulas,
+      Rating: r.rating,
+      "Teks Ulasan": r.teksUlasan,
+      "Unit Layanan": r.unitLayanan,
+      "Kategori Masalah": r.kategoriMasalah,
+      Sentimen: r.sentimen,
+      "Status Tindak Lanjut": r.statusTindakLanjut,
+    }));
+    const blob = generateXlsx(xlsxRecords, "Laporan Mutu");
+    const arrayBuffer = await blob.arrayBuffer();
+    return new NextResponse(new Uint8Array(arrayBuffer), {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${namaFile}.xlsx"`,
+      },
+    });
+  }
+
+  // ── Word (DOCX) ───────────────────────────────────────────────
+  if (format === "docx") {
+    const buffer = await generateDocx(
+      rs,
+      records,
+      { dari, sampai },
+      effectiveKopSurat
+    );
+    return new NextResponse(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Disposition": `attachment; filename="${namaFile}.docx"`,
+      },
+    });
+  }
+
+  return NextResponse.json(
+    { error: "Format tidak didukung. Gunakan: pdf, xlsx, atau docx." },
+    { status: 400 }
+  );
 }

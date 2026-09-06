@@ -1,4 +1,4 @@
-import { getEnv, aiConfigured, aiConfiguredNVIDIA } from "./ai";
+import { getEnv, getEnvGemini, aiConfigured, aiConfiguredGemini, aiConfiguredNVIDIA } from "./ai";
 
 export type UnitLayanan = "IGD" | "Farmasi" | "Poliklinik/Dokter" | "Rawat Inap" | "Kasir/BPJS" | "Fasilitas & Parkir" | "Lainnya";
 export type KategoriMasalah = "Waktu Tunggu" | "Keramahan Staf" | "Kebersihan" | "Akurasi Administrasi" | "Kompetensi Medis" | "Lainnya";
@@ -173,7 +173,7 @@ const MAX_ATTEMPTS_429 = 6;
 const BACKOFF_429_MS = [30_000, 60_000, 120_000, 240_000, 300_000];
 
 export async function analisisUlasanRumahSakit(teksUlasan: string, rating: number | null): Promise<HasilAnalisisRumahSakit> {
-  const configured = aiConfigured() || aiConfiguredNVIDIA();
+  const configured = aiConfigured();
 
   if (!configured) {
     return {
@@ -186,14 +186,14 @@ export async function analisisUlasanRumahSakit(teksUlasan: string, rating: numbe
     };
   }
 
-  if (aiConfigured()) {
+  if (aiConfiguredGemini()) {
     let lastError: unknown = null;
     let jumlahPercobaan = 0;
 
     while (jumlahPercobaan < MAX_ATTEMPTS_429) {
       jumlahPercobaan++;
       try {
-        return await callOnce(teksUlasan, rating, 90_000);
+        return await callOnceGeminiHospital(teksUlasan, rating, 90_000);
       } catch (error) {
         lastError = error;
         const retryable = error instanceof RetryableError || error instanceof TypeError || (error instanceof Error && error.name === "AbortError");
@@ -210,8 +210,7 @@ export async function analisisUlasanRumahSakit(teksUlasan: string, rating: numbe
         await new Promise((r) => setTimeout(r, jedaMs));
       }
     }
-
-    throw lastError instanceof Error ? lastError : new Error("Pemanggilan AI gagal");
+    console.warn("[ai-hospital] Gemini gagal, mencoba fallback NVIDIA/OpenCode:", lastError);
   }
 
   if (aiConfiguredNVIDIA()) {
@@ -240,6 +239,34 @@ export async function analisisUlasanRumahSakit(teksUlasan: string, rating: numbe
     }
 
     throw lastError instanceof Error ? lastError : new Error("Pemanggilan NVIDIA AI gagal");
+  }
+
+  if (Boolean(process.env.OPENCODE_ZEN_API_KEY)) {
+    let lastError: unknown = null;
+    let jumlahPercobaan = 0;
+
+    while (jumlahPercobaan < MAX_ATTEMPTS_429) {
+      jumlahPercobaan++;
+      try {
+        return await callOnce(teksUlasan, rating, 90_000);
+      } catch (error) {
+        lastError = error;
+        const retryable = error instanceof RetryableError || error instanceof TypeError || (error instanceof Error && error.name === "AbortError");
+        if (!retryable) break;
+
+        let jedaMs: number;
+        if (error instanceof RetryableError && error.status === 429) {
+          if (jumlahPercobaan >= MAX_ATTEMPTS_429) break;
+          jedaMs = error.retryAfterMs ?? BACKOFF_429_MS[Math.min(jumlahPercobaan - 1, BACKOFF_429_MS.length - 1)];
+        } else {
+          if (jumlahPercobaan >= MAX_ATTEMPTS) break;
+          jedaMs = BACKOFF_MS[Math.min(jumlahPercobaan - 1, BACKOFF_MS.length - 1)];
+        }
+        await new Promise((r) => setTimeout(r, jedaMs));
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("Pemanggilan OpenCode Zen gagal");
   }
 
   throw new Error("Tidak ada kunci AI yang terkonfigurasi");
@@ -311,6 +338,74 @@ function getEnvNVIDIAfromHospital() {
     baseUrl: (process.env.NVIDIA_BASE_URL ?? "https://api.nvidia.com/v1").replace(/\/$/, ""),
     model: process.env.NVIDIA_MODEL ?? "nemotron",
   };
+}
+
+const MIN_REQUEST_GAP_MS_GEMINI_HOSPITAL = 800;
+let waktuPermintaanTerakhirGeminiHospital = 0;
+let antreanPermintaanGeminiHospital: Promise<void> = Promise.resolve();
+
+async function tungguGiliranGeminiHospital(): Promise<void> {
+  const giliran = antreanPermintaanGeminiHospital;
+  let lepaskan: () => void = () => undefined;
+  antreanPermintaanGeminiHospital = new Promise<void>((resolve) => { lepaskan = resolve; });
+  await giliran;
+  const sejakTerakhir = Date.now() - waktuPermintaanTerakhirGeminiHospital;
+  if (sejakTerakhir < MIN_REQUEST_GAP_MS_GEMINI_HOSPITAL) {
+    await new Promise((r) => setTimeout(r, MIN_REQUEST_GAP_MS_GEMINI_HOSPITAL - sejakTerakhir));
+  }
+  waktuPermintaanTerakhirGeminiHospital = Date.now();
+  lepaskan();
+}
+
+async function callOnceGeminiHospital(teksUlasan: string, rating: number | null, timeoutMs: number): Promise<HasilAnalisisRumahSakit> {
+  const { apiKey, model } = getEnvGemini();
+  await tungguGiliranGeminiHospital();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: SYSTEM_PROMPT_RS }],
+        },
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+        },
+        contents: [
+          {
+            parts: [
+              {
+                text: JSON.stringify({ rating, ulasan: teksUlasan }),
+              },
+            ],
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    if (res.status === 429 || res.status >= 500) {
+      const retryAfterDetik = Number(res.headers.get("retry-after"));
+      const retryAfterMs = Number.isFinite(retryAfterDetik) && retryAfterDetik > 0 ? retryAfterDetik * 1000 : undefined;
+      throw new RetryableError(`Gemini AI error ${res.status}`, res.status, retryAfterMs);
+    }
+    if (!res.ok) {
+      throw new Error(`Gemini AI error ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    return normalizeHasil(extractJson(content));
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function prosesBatchAnalisis(ulasans: Array<{ id: number; teksUlasan: string; rating: number | null }>, onProgress?: (done: number, total: number) => void): Promise<Map<number, HasilAnalisisRumahSakit>> {

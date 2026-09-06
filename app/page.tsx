@@ -3,13 +3,19 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowDownRight,
   ArrowRight,
   ArrowsClockwise,
+  ArrowUpRight,
   Broom,
+  CaretDown,
   Chats,
+  CheckCircle,
   ChartDonut,
   ChartLineUp,
+  Download,
   Info,
+  Minus,
   SpinnerGap,
   StopCircle,
   Tag,
@@ -17,45 +23,94 @@ import {
   UploadSimple,
   WarningCircle,
 } from "@phosphor-icons/react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { PageHeader } from "@/components/page-header";
 import { Stat } from "@/components/metric";
 import { EmptyState, LoadingSection } from "@/components/states";
-import { PilihPeriode } from "@/components/pilih-periode";
 import { SentimenDonut } from "@/components/sentimen-donut";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { formatTanggalWaktu, type AnalisisItem } from "@/lib/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { formatTanggal, formatTanggalWaktu, type AnalisisItem } from "@/lib/types";
 
 export default function DashboardPage() {
   const [daftar, setDaftar] = useState<AnalisisItem[]>([]);
   const [memuat, setMemuat] = useState(true);
   const [dipilih, setDipilih] = useState<number | null>(null);
+  const [periodeA, setPeriodeA] = useState<number | null>(null);
+  const [periodeB, setPeriodeB] = useState<number | null>(null);
   const [prosesUlangJalan, setProsesUlangJalan] = useState(false);
   const [pesanProsesUlang, setPesanProsesUlang] = useState<string | null>(null);
   const [hentikanJalan, setHentikanJalan] = useState(false);
+  const [namaRS, setNamaRS] = useState<string>("Rumah Sakit Umum");
+  const [rumahSakitId, setRumahSakitId] = useState<number | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [pesanSukses, setPesanSukses] = useState<string | null>(null);
 
   const muatDaftar = useCallback(() => {
     return fetch("/api/analisis")
       .then((res) => res.json())
-      .then((data: { analisis: AnalisisItem[] }) => {
-        setDaftar(data.analisis);
-        return data.analisis;
+      .then((data: { analisis?: AnalisisItem[] }) => {
+        const list = Array.isArray(data?.analisis) ? data.analisis : [];
+        setDaftar(list);
+        return list;
+      })
+      .catch(() => {
+        setDaftar([]);
+        return [];
       });
   }, []);
 
   useEffect(() => {
+    fetch("/api/rumah-sakit")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.rumahSakit?.[0]) {
+          setNamaRS(data.rumahSakit[0].nama);
+          setRumahSakitId(data.rumahSakit[0].id);
+        }
+      })
+      .catch(() => undefined);
+
     fetch("/api/analisis")
       .then((res) => res.json())
-      .then((data: { analisis: AnalisisItem[] }) => {
-        setDaftar(data.analisis);
-        const selesai = data.analisis.find((a) => a.status === "selesai");
-        setDipilih(selesai?.id ?? data.analisis[0]?.id ?? null);
+      .then((data: { analisis?: AnalisisItem[] }) => {
+        const list = Array.isArray(data?.analisis) ? data.analisis : [];
+        setDaftar(list);
+        const selesai = list.filter((a) => a.status === "selesai");
+        setDipilih(selesai[0]?.id ?? list[0]?.id ?? null);
+        if (selesai.length >= 2) {
+          setPeriodeA(selesai[1].id);
+          setPeriodeB(selesai[0].id);
+        } else if (selesai.length === 1) {
+          setPeriodeA(selesai[0].id);
+          setPeriodeB(selesai[0].id);
+        }
       })
+      .catch(() => setDaftar([]))
       .finally(() => setMemuat(false));
   }, []);
 
-  const statusAktif = daftar.find((a) => a.id === dipilih)?.status;
+  const statusAktif = (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih)?.status;
   useEffect(() => {
     if (statusAktif !== "berjalan") return;
     const timer = setInterval(() => {
@@ -115,30 +170,35 @@ export default function DashboardPage() {
     setDipilih(selesai?.id ?? sisa[0]?.id ?? null);
   }, []);
 
-  const hapusAktif = useCallback(async () => {
-    if (dipilih === null || aksiJalan) return;
-    if (konfirmasi !== "hapus") {
-      setKonfirmasi("hapus");
-      return;
-    }
-    setAksiJalan(true);
+  const handleSync = async (periode: "1d" | "1w" | "1m" | "1y") => {
+    if (!rumahSakitId) return;
+    setSyncLoading(true);
     setPesanAksi(null);
+    setPesanSukses(null);
     try {
-      const res = await fetch(`/api/analisis/${dipilih}`, { method: "DELETE" });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setPesanAksi(data.error ?? "Gagal menghapus dataset.");
-        return;
+      const res = await fetch("/api/sinkron", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rumahSakitId, tipePemicu: "manual", periode }),
+      });
+      const data = await res.json();
+      if (data.sukses) {
+        const list = await muatDaftar();
+        if (list[0]) setDipilih(list[0].id);
+        if (data.ulasanBaru === 0) {
+          setPesanSukses("Sinkronisasi selesai: Tidak ditemukan ulasan baru untuk periode ini.");
+        } else {
+          setPesanSukses(`Berhasil menarik ${data.ulasanBaru} ulasan baru dari Google Maps.`);
+        }
+      } else {
+        setPesanAksi(`Gagal tarik data: ${data.pesanError}`);
       }
-      const sisa = await muatDaftar();
-      pilihSetelahHapus(sisa);
     } catch {
-      setPesanAksi("Gagal menghapus dataset. Coba lagi.");
+      setPesanAksi("Terjadi kesalahan saat menarik data.");
     } finally {
-      setAksiJalan(false);
-      setKonfirmasi(null);
+      setSyncLoading(false);
     }
-  }, [dipilih, aksiJalan, konfirmasi, muatDaftar, pilihSetelahHapus]);
+  };
 
   const bersihkanSemua = useCallback(async () => {
     if (aksiJalan) return;
@@ -165,8 +225,32 @@ export default function DashboardPage() {
     }
   }, [aksiJalan, konfirmasi, muatDaftar]);
 
-  const aktif = useMemo(() => daftar.find((a) => a.id === dipilih) ?? null, [daftar, dipilih]);
+  const aktif = useMemo(() => (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih) ?? null, [daftar, dipilih]);
   const totalTerlabel = aktif ? aktif.totalPositif + aktif.totalNegatif + aktif.totalNetral : 0;
+
+  const selesaiUrutWaktu = useMemo(
+    () =>
+      [...daftar]
+        .filter((a) => a.status === "selesai")
+        .sort((a, b) => new Date(a.tanggalUnggah).getTime() - new Date(b.tanggalUnggah).getTime()),
+    [daftar]
+  );
+
+  const dataGrafik = useMemo(
+    () =>
+      selesaiUrutWaktu.map((a) => {
+        const terlabel = a.totalPositif + a.totalNegatif + a.totalNetral;
+        return {
+          tanggal: formatTanggal(a.tanggalUnggah),
+          Positif: terlabel ? Math.round((a.totalPositif / terlabel) * 100) : 0,
+          Negatif: terlabel ? Math.round((a.totalNegatif / terlabel) * 100) : 0,
+        };
+      }),
+    [selesaiUrutWaktu]
+  );
+
+  const itemA = useMemo(() => daftar.find((a) => a.id === periodeA), [daftar, periodeA]);
+  const itemB = useMemo(() => daftar.find((a) => a.id === periodeB), [daftar, periodeB]);
 
   if (memuat) {
     return <LoadingSection rows={2} />;
@@ -177,12 +261,63 @@ export default function DashboardPage() {
       <div>
         <PageHeader
           title="Analisis Sentimen Ulasan"
-          description="Unggah ulasan Google Maps, lalu lihat proporsi sentimen dan aspek layanan yang perlu diperbaiki atau dipertahankan."
-        />
+          description={namaRS}
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" disabled={syncLoading} className="gap-2">
+                <ArrowsClockwise className={cn("size-4", syncLoading && "animate-spin")} weight="duotone" />
+                <span>Tarik Data</span>
+                <CaretDown className="size-3.5 opacity-70" weight="bold" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuLabel>Periode Penarikan</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleSync("1d")} className="cursor-pointer">
+                1 Hari
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleSync("1w")} className="cursor-pointer">
+                1 Minggu
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleSync("1m")} className="cursor-pointer">
+                1 Bulan
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleSync("1y")} className="cursor-pointer">
+                1 Tahun
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={aksiJalan}
+            onClick={bersihkanSemua}
+            className={cn("gap-2", konfirmasi === "bersihkan" && "border-destructive/50 text-destructive")}
+          >
+            <Broom className="size-4" weight="duotone" />
+            <span>{konfirmasi === "bersihkan" ? "Yakin? Klik lagi" : "Bersihkan Data"}</span>
+          </Button>
+        </PageHeader>
+
+        {pesanAksi && (
+          <div className="reveal mb-6 flex items-center gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            <WarningCircle className="size-4 shrink-0" weight="duotone" />
+            {pesanAksi}
+          </div>
+        )}
+
+        {pesanSukses && (
+          <div className="reveal mb-6 flex items-center gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+            <CheckCircle className="size-4 shrink-0 text-emerald-600" weight="duotone" />
+            {pesanSukses}
+          </div>
+        )}
         <EmptyState
           icon={UploadSimple}
           title="Belum ada data ulasan"
-          description="Mulai dengan mengunggah file CSV atau Excel berisi ulasan Google Maps. Kolom relevan akan dideteksi otomatis."
+          description="Gunakan tombol Tarik Data di kanan atas atau unggah file ulasan CSV/Excel."
           action={
             <Button size="lg" render={<Link href="/unggah" />}>
               Unggah Data Ulasan
@@ -229,32 +364,43 @@ export default function DashboardPage() {
     <div>
       <PageHeader
         title="Analisis Sentimen Ulasan"
-        description={`Diunggah ${formatTanggalWaktu(aktif.tanggalUnggah)} · ${aktif.namaFile}`}
+        description={namaRS}
       >
-        <PilihPeriode daftar={daftar} dipilih={dipilih} onChange={setDipilih} hanyaSelesai={false} />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={syncLoading} className="gap-2">
+              <ArrowsClockwise className={cn("size-4", syncLoading && "animate-spin")} weight="duotone" />
+              <span>Tarik Data</span>
+              <CaretDown className="size-3.5 opacity-70" weight="bold" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuLabel>Periode Penarikan</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => handleSync("1d")} className="cursor-pointer">
+              1 Hari
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleSync("1w")} className="cursor-pointer">
+              1 Minggu
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleSync("1m")} className="cursor-pointer">
+              1 Bulan
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleSync("1y")} className="cursor-pointer">
+              1 Tahun
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <Button
           variant="outline"
           size="sm"
-          disabled={aksiJalan || aktif.status === "berjalan"}
-          onClick={hapusAktif}
-          className={konfirmasi === "hapus" ? "border-destructive/50 text-destructive" : ""}
-        >
-          {aksiJalan ? (
-            <SpinnerGap className="size-4 animate-spin" weight="duotone" />
-          ) : (
-            <Trash className="size-4" weight="duotone" />
-          )}
-          {konfirmasi === "hapus" ? "Yakin? Klik lagi" : "Hapus dataset"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={aksiJalan || daftar.some((a) => a.status === "berjalan")}
+          disabled={aksiJalan || (Array.isArray(daftar) && daftar.some((a) => a.status === "berjalan"))}
           onClick={bersihkanSemua}
-          className={konfirmasi === "bersihkan" ? "border-destructive/50 text-destructive" : ""}
+          className={cn("gap-2", konfirmasi === "bersihkan" && "border-destructive/50 text-destructive")}
         >
           <Broom className="size-4" weight="duotone" />
-          {konfirmasi === "bersihkan" ? "Yakin? Klik lagi" : "Bersihkan semua"}
+          <span>{konfirmasi === "bersihkan" ? "Yakin? Klik lagi" : "Bersihkan Data"}</span>
         </Button>
       </PageHeader>
 
@@ -262,6 +408,13 @@ export default function DashboardPage() {
         <div className="reveal mb-6 flex items-center gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
           <WarningCircle className="size-4 shrink-0" weight="duotone" />
           {pesanAksi}
+        </div>
+      )}
+
+      {pesanSukses && (
+        <div className="reveal mb-6 flex items-center gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          <CheckCircle className="size-4 shrink-0 text-emerald-600" weight="duotone" />
+          {pesanSukses}
         </div>
       )}
 
@@ -388,7 +541,7 @@ export default function DashboardPage() {
           <div className="mt-6 grid gap-6 lg:grid-cols-5">
             <div className="reveal rounded-xl border border-border bg-card py-6 lg:col-span-2" style={{ animationDelay: "120ms" }}>
               <div className="px-6">
-                <h3 className="font-semibold leading-none tracking-tight">Proporsi Sentimen</h3>
+                <h3 className="text-sm font-semibold leading-none tracking-tight">Proporsi Sentimen</h3>
                 <p className="mt-1.5 text-sm text-muted-foreground">Sebaran sentimen dari seluruh ulasan terlabel.</p>
               </div>
               <div className="mt-6 px-6">
@@ -407,8 +560,8 @@ export default function DashboardPage() {
 
             <div className="reveal rounded-xl border border-border bg-card py-6 lg:col-span-3" style={{ animationDelay: "180ms" }}>
               <div className="px-6">
-                <h3 className="font-semibold leading-none tracking-tight">Kondisi Umum Layanan</h3>
-                <p className="mt-1.5 text-sm text-muted-foreground">Dashboard kondisi layanan berdasarkan hasil analisis.</p>
+                <h3 className="text-sm font-semibold leading-none tracking-tight">Kondisi Umum Layanan</h3>
+                <p className="mt-1.5 text-xs text-muted-foreground">Dashboard kondisi layanan berdasarkan hasil analisis.</p>
               </div>
               <div className="mt-6 px-6">
                 <p className="text-[15px] leading-relaxed">
@@ -422,22 +575,81 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          <div className="mt-6 reveal rounded-xl border border-border bg-card py-6" style={{ animationDelay: "200ms" }}>
+            <div className="px-6">
+              <h3 className="text-sm font-semibold leading-none tracking-tight">Grafik Tren Sentimen</h3>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Persentase sentimen positif dan negatif dari setiap periode analisis.
+              </p>
+            </div>
+            <div className="mt-6 px-6">
+              {dataGrafik.length === 0 ? (
+                <p className="py-8 text-center text-xs text-muted-foreground">
+                  Belum ada analisis yang selesai untuk digambarkan.
+                </p>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dataGrafik}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.92 0.004 286.32)" />
+                      <XAxis dataKey="tanggal" fontSize={11} tickLine={false} axisLine={false} />
+                      <YAxis fontSize={11} tickLine={false} axisLine={false} unit="%" domain={[0, 100]} />
+                      <Tooltip formatter={(value) => `${value}%`} contentStyle={{ borderRadius: 12, fontSize: 11, border: "1px solid oklch(0.92 0.004 286.32)" }} />
+                      <Legend />
+                      <Line type="monotone" dataKey="Positif" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="Negatif" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {selesaiUrutWaktu.length >= 2 && (
+            <div className="mt-6 reveal rounded-xl border border-border bg-card py-6" style={{ animationDelay: "240ms" }}>
+              <div className="px-6">
+                <h3 className="text-sm font-semibold leading-none tracking-tight">Perbandingan Periode</h3>
+                <p className="mt-1.5 text-xs text-muted-foreground">Pilih dua periode untuk melihat selisih jumlah sentimen.</p>
+              </div>
+              <div className="mt-6 space-y-4 px-6">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5 text-xs">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Periode awal</span>
+                    <PeriodeSelect daftar={selesaiUrutWaktu} dipilih={periodeA} onChange={setPeriodeA} />
+                  </div>
+                  <div className="space-y-1.5 text-xs">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Periode pembanding</span>
+                    <PeriodeSelect daftar={selesaiUrutWaktu} dipilih={periodeB} onChange={setPeriodeB} />
+                  </div>
+                </div>
+
+                {itemA && itemB && (
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <KartuSelisih label="Positif" awal={itemA.totalPositif} akhir={itemB.totalPositif} baikJikaNaik index={0} />
+                    <KartuSelisih label="Netral" awal={itemA.totalNetral} akhir={itemB.totalNetral} netral index={1} />
+                    <KartuSelisih label="Negatif" awal={itemA.totalNegatif} akhir={itemB.totalNegatif} index={2} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             {[
               { icon: Chats, label: "Daftar Ulasan", desc: "Telusuri dan saring ulasan", href: "/ulasan" },
               { icon: Tag, label: "Analisis Aspek", desc: "Aspek yang perlu diperbaiki", href: "/aspek" },
-              { icon: ChartLineUp, label: "Pemantauan Tren", desc: "Bandingkan antar periode", href: "/tren" },
+              { icon: Download, label: "Ekspor Laporan", desc: "Unduh laporan PDF / Excel", href: "/export" },
             ].map((item, i) => (
               <Link
                 key={item.href}
                 href={item.href}
                 className="reveal group flex items-center gap-4 rounded-xl border border-border bg-card px-6 py-4 transition-colors hover:bg-accent/60"
-                style={{ animationDelay: `${240 + i * 60}ms` }}
+                style={{ animationDelay: `${280 + i * 60}ms` }}
               >
                 <item.icon className="size-5 text-primary" weight="duotone" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold">{item.label}</div>
-                  <div className="truncate text-sm text-muted-foreground">{item.desc}</div>
+                  <div className="truncate text-xs text-muted-foreground">{item.desc}</div>
                 </div>
                 <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
               </Link>
@@ -445,6 +657,100 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function PeriodeSelect({
+  daftar,
+  dipilih,
+  onChange,
+}: {
+  daftar: AnalisisItem[];
+  dipilih: number | null;
+  onChange: (id: number) => void;
+}) {
+  if (daftar.length === 0) {
+    return (
+      <Select disabled>
+        <SelectTrigger className="w-full h-9 text-xs">
+          <SelectValue placeholder="Belum ada periode selesai" />
+        </SelectTrigger>
+      </Select>
+    );
+  }
+
+  return (
+    <Select
+      value={dipilih ? String(dipilih) : ""}
+      onValueChange={(val) => onChange(Number(val))}
+    >
+      <SelectTrigger className="w-full bg-card shadow-xs h-9 text-xs">
+        <SelectValue placeholder="Pilih Periode" />
+      </SelectTrigger>
+      <SelectContent align="start">
+        {daftar.map((item) => (
+          <SelectItem key={item.id} value={String(item.id)}>
+            {formatTanggal(item.tanggalUnggah)} · {item.namaFile}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function KartuSelisih({
+  label,
+  awal,
+  akhir,
+  baikJikaNaik = false,
+  netral = false,
+  index = 0,
+}: {
+  label: string;
+  awal: number;
+  akhir: number;
+  baikJikaNaik?: boolean;
+  netral?: boolean;
+  index?: number;
+}) {
+  const selisih = akhir - awal;
+  const naik = selisih > 0;
+  const turun = selisih < 0;
+
+  const arahWarna = netral
+    ? "text-muted-foreground"
+    : naik
+      ? baikJikaNaik
+        ? "text-emerald-600"
+        : "text-rose-600"
+      : turun
+        ? baikJikaNaik
+          ? "text-rose-600"
+          : "text-emerald-600"
+        : "text-muted-foreground";
+
+  return (
+    <div className="reveal rounded-xl border border-border bg-background/60 px-5 py-4" style={{ animationDelay: `${index * 60}ms` }}>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className="mt-2 font-mono text-xl font-bold tabular-nums">
+        {awal} <span className="text-muted-foreground text-sm font-normal">→</span> {akhir}
+      </div>
+      <p className={cn("mt-1 flex items-center gap-1 text-xs font-semibold", arahWarna)}>
+        {selisih === 0 ? (
+          <>
+            <Minus className="size-3.5" /> Tidak berubah
+          </>
+        ) : naik ? (
+          <>
+            <ArrowUpRight className="size-3.5" /> +{selisih}
+          </>
+        ) : (
+          <>
+            <ArrowDownRight className="size-3.5" /> {selisih}
+          </>
+        )}
+      </p>
     </div>
   );
 }

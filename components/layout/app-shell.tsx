@@ -1,23 +1,34 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, useEffect, type ReactNode, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  CaretDown,
   ChartLine,
   Chats,
   ClipboardText,
+  Cpu,
   Download,
   Gear,
+  Globe,
   House,
+  SignOut,
   Tag,
   UploadSimple,
+  User,
 } from "@phosphor-icons/react";
 import type { IconProps } from "@phosphor-icons/react";
-import type { ComponentType } from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface NavItem {
   href: string;
@@ -32,9 +43,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/unggah", label: "Unggah Data", icon: UploadSimple, step: 1 },
   { href: "/ulasan", label: "Daftar Ulasan", icon: Chats, step: 2 },
   { href: "/aspek", label: "Analisis Aspek", icon: Tag, step: 3 },
-  { href: "/tren", label: "Pemantauan Tren", icon: ChartLine, step: 4 },
-  { href: "/export", label: "Ekspor Laporan", icon: Download, step: 5 },
-  { href: "/pengaturan", label: "Pengaturan RS", icon: Gear, step: 6 },
+  { href: "/export", label: "Ekspor Laporan", icon: Download, step: 4 },
+  { href: "/pengaturan", label: "Pengaturan RS", icon: Gear, step: 5 },
 ];
 
 function SidebarLink({ href, label, icon: Icon, step }: NavItem) {
@@ -68,6 +78,35 @@ function SidebarLink({ href, label, icon: Icon, step }: NavItem) {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+
+  const [aiModelName, setAiModelName] = useState("Google Gemini (Antigravity)");
+
+  useEffect(() => {
+    function loadConfig() {
+      if (typeof window !== "undefined") {
+        const savedModel = localStorage.getItem("ulas_ai_model") || "Google Gemini (Antigravity)";
+        setAiModelName(savedModel);
+      }
+    }
+    loadConfig();
+    window.addEventListener("ulas_ai_config_updated", loadConfig);
+    return () => window.removeEventListener("ulas_ai_config_updated", loadConfig);
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    }
+    window.location.href = "/login";
+  };
+
+  // Jangan render sidebar dan header ketika di halaman login
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
+
   const current = NAV_ITEMS.find((item) =>
     item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
   );
@@ -76,7 +115,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="min-h-[100dvh]">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-border bg-sidebar lg:flex">
         <div className="flex items-center justify-center px-5 pt-6 pb-5">
-          <img src="/logo ulas ai.svg" alt="Ulas AI"/>
+          <img src="/logo ulas ai.svg" alt="Ulas AI" />
         </div>
         <Separator />
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
@@ -84,22 +123,117 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SidebarLink key={item.href} {...item} />
           ))}
         </nav>
-        <div className="border-t border-border px-5 py-4">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            UlasAI &middot; AI Gateway
-            <br />
-            Analisis Sentimen Ulasan Google Maps
-          </p>
+        <div className="border-t border-border px-3 py-3 space-y-2">
+          <button
+            onClick={handleLogout}
+            type="button"
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+          >
+            <SignOut className="size-4 shrink-0" weight="regular" />
+            <span>Keluar (Logout)</span>
+          </button>
+          <div className="px-2 pt-1 border-t border-border/50">
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              UlasAI &middot; AI Gateway
+              <br />
+              Analisis Sentimen Ulasan RS
+            </p>
+          </div>
         </div>
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-sm">
+        <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
           <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-10">
+            {/* Left: Current Page Context & Mobile Logo */}
             <div className="flex min-w-0 items-center gap-3">
               <img src="/logo ulas ai.svg" alt="Ulas AI" className="h-7 w-auto lg:hidden" />
+              <h2 className="hidden text-sm font-semibold tracking-tight text-foreground lg:block">
+                {current?.label ?? "Ulas AI"}
+              </h2>
+            </div>
+
+            {/* Right: Model AI Connection Status, Apify Status, and User Profile Dropdown */}
+            <div className="flex items-center gap-3 sm:gap-4">
+              {/* Status Indicators Group */}
+              <div className="flex items-center gap-2.5 sm:gap-3.5 rounded-full border border-border/80 bg-muted/40 px-3.5 py-1.5 text-xs shadow-2xs">
+                {/* Model AI Connection Status */}
+                <div className="flex items-center gap-2">
+                  <span className="relative flex size-2 shrink-0">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                  </span>
+                  <span className="hidden text-muted-foreground md:inline">Model AI:</span>
+                  <span className="font-semibold text-foreground">{aiModelName}</span>
+                  <Badge variant="outline" className="hidden sm:inline-flex bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] py-0 px-1.5 font-medium">
+                    Terhubung
+                  </Badge>
+                </div>
+
+                <Separator orientation="vertical" className="h-4 bg-border/80" />
+
+                {/* APIFY API Connection Status */}
+                <div className="flex items-center gap-2">
+                  <span className="relative flex size-2 shrink-0">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                  </span>
+                  <span className="text-muted-foreground">Apify API:</span>
+                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] py-0 px-1.5 font-medium">
+                    Terhubung
+                  </Badge>
+                </div>
+              </div>
+
+              <Separator orientation="vertical" className="hidden sm:block h-5 bg-border/80" />
+
+              {/* User Profile Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-2.5 rounded-full border border-border/80 bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition-all duration-200 hover:bg-accent hover:border-border shadow-2xs focus:outline-hidden">
+                    <div className="flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-[11px] tracking-wider">
+                      BD
+                    </div>
+                    <span className="hidden sm:inline font-medium">Bagoes Dev</span>
+                    <CaretDown className="size-3.5 text-muted-foreground opacity-70" weight="bold" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 p-1.5">
+                  <div className="px-2 py-2">
+                    <p className="text-xs font-semibold text-foreground">Bagoes Dev</p>
+                    <p className="text-[11px] text-muted-foreground truncate">bagoesdev@ulas.ai</p>
+                    <div className="mt-1.5">
+                      <Badge variant="secondary" className="text-[10px] font-normal px-2 py-0.5">
+                        Admin Pengelola RS
+                      </Badge>
+                    </div>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild className="cursor-pointer">
+                    <Link href="/pengaturan" className="flex items-center gap-2">
+                      <Gear className="size-4" weight="regular" />
+                      <span>Pengaturan RS</span>
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild className="cursor-pointer">
+                    <Link href="/jurnal" className="flex items-center gap-2">
+                      <ClipboardText className="size-4" weight="regular" />
+                      <span>Jurnal Harian</span>
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="cursor-pointer text-rose-600 focus:text-rose-600 focus:bg-rose-50 dark:focus:bg-rose-950/30"
+                  >
+                    <SignOut className="size-4" weight="regular" />
+                    <span>Keluar</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
+
           <nav className="flex gap-1 overflow-x-auto border-t border-border px-4 py-2 lg:hidden">
             {NAV_ITEMS.map((item) => {
               const aktif = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);

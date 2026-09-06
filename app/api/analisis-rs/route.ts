@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { ulasan } from "@/lib/db/schema";
-import { eq, and, isNull, inArray } from "drizzle-orm";
-import { analisisUlasanRumahSakit, prosesBatchAnalisis } from "@/lib/ai-hospital";
+import { supabase, toCamel, toSnake } from "@/lib/db";
+import { ulasan, UlasanRow } from "@/lib/db/schema";
+import { prosesBatchAnalisis } from "@/lib/ai-hospital";
 
 export const runtime = "nodejs";
 
@@ -15,40 +14,46 @@ export async function POST(req: Request) {
   if (ulasanIds && Array.isArray(ulasanIds)) {
     targetIds = ulasanIds;
   } else if (rumahSakitId) {
-    const rows = await db.select({ id: ulasan.id }).from(ulasan)
-      .where(and(eq(ulasan.rumahSakitId, rumahSakitId), isNull(ulasan.sentimen)))
+    const { data: rows } = await supabase.from(ulasan)
+      .select("id")
+      .eq("rumah_sakit_id", rumahSakitId)
+      .is("sentimen", null)
       .limit(50);
-    targetIds = rows.map((r) => r.id);
+    targetIds = (rows ?? []).map((r) => r.id);
   } else if (analisisId) {
-    const rows = await db.select({ id: ulasan.id }).from(ulasan)
-      .where(and(eq(ulasan.analisisId, analisisId), isNull(ulasan.sentimen)))
+    const { data: rows } = await supabase.from(ulasan)
+      .select("id")
+      .eq("analisis_id", analisisId)
+      .is("sentimen", null)
       .limit(50);
-    targetIds = rows.map((r) => r.id);
+    targetIds = (rows ?? []).map((r) => r.id);
   }
 
   if (targetIds.length === 0) {
     return NextResponse.json({ diproses: 0, pesan: "Tidak ada ulasan yang perlu diproses" });
   }
 
-  const ulasanData = await db.select({ id: ulasan.id, teksUlasan: ulasan.teksUlasan, rating: ulasan.rating })
-    .from(ulasan)
-    .where(inArray(ulasan.id, targetIds));
+  const { data: ulasanDataRaw } = await supabase.from(ulasan)
+    .select("id, teks_ulasan, rating")
+    .in("id", targetIds);
 
-  const hasil = await prosesBatchAnalisis(ulasanData.map((u) => ({ id: u.id, teksUlasan: u.teksUlasan, rating: u.rating })));
+  const ulasanData = toCamel<UlasanRow[]>(ulasanDataRaw ?? []);
+
+  const hasil = await prosesBatchAnalisis(ulasanData.map((u) => ({ id: u.id, teksUlasan: u.teksUlasan, rating: u.rating ?? null })));
 
   let diproses = 0;
   let krisis = 0;
   for (const [id, res] of hasil.entries()) {
-    await db.update(ulasan)
-      .set({
+    await supabase.from(ulasan)
+      .update(toSnake({
         unitLayanan: res.unitLayanan,
         kategoriMasalah: res.kategoriMasalah,
         sentimen: res.sentimen,
         faktorUrgensiMedis: res.faktorUrgensiMedis,
         saranDrafBalasan: res.saranDrafBalasan,
-        diperbaruiPada: new Date(),
-      })
-      .where(eq(ulasan.id, id));
+        diperbaruiPada: new Date().toISOString(),
+      }))
+      .eq("id", id);
     diproses++;
     if (res.faktorUrgensiMedis) krisis++;
   }
@@ -61,8 +66,8 @@ export async function GET(req: Request) {
   const id = url.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id wajib" }, { status: 400 });
 
-  const itemRows = await db.select().from(ulasan).where(eq(ulasan.id, parseInt(id))).limit(1);
-  const item = itemRows[0];
+  const { data: itemRowsRaw } = await supabase.from(ulasan).select("*").eq("id", parseInt(id)).limit(1);
+  const item = toCamel<UlasanRow>(itemRowsRaw?.[0]);
   if (!item) return NextResponse.json({ error: "Ulasan tidak ditemukan" }, { status: 404 });
 
   return NextResponse.json(item);

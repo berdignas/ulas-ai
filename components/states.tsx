@@ -36,7 +36,7 @@ export function ErrorState({ title = "Terjadi kesalahan", message, onRetry }: Er
   return (
     <div className="reveal rounded-xl border border-rose-200 bg-rose-50 px-6 py-10 text-center">
       <WarningCircle className="mx-auto size-8 text-rose-600" weight="duotone" />
-      <h3 className="mt-3 text-base font-semibold text-rose-900">{title}</h3>
+      <h3 className="mt-3 text-sm font-semibold text-rose-900">{title}</h3>
       <p className="mx-auto mt-1.5 max-w-lg break-words text-sm leading-relaxed text-rose-800/90">
         {message}
       </p>

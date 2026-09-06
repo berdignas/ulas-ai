@@ -1,186 +1,3 @@
-import {
-  pgTable,
-  serial,
-  integer,
-  text,
-  timestamp,
-  boolean,
-  uniqueIndex,
-  index,
-  pgEnum,
-} from "drizzle-orm/pg-core";
-
-export const sentimenEnum = pgEnum("sentimen", ["positif", "negatif", "netral"]);
-export const statusAnalisisEnum = pgEnum("status_analisis", [
-  "menunggu",
-  "berjalan",
-  "selesai",
-  "gagal",
-  "berhenti",
-]);
-export const statusTindakLanjutEnum = pgEnum("status_tindak_lanjut", [
-  "baru",
-  "dalam_koordinasi",
-  "selesai",
-]);
-
-export const rumahSakit = pgTable("rumah_sakit", {
-  id: serial("id").primaryKey(),
-  nama: text("nama").notNull(),
-  kode: text("kode").notNull().unique(),
-  googleMapsPlaceId: text("google_maps_place_id"),
-  apifyActorId: text("apify_actor_id").default(
-    "compass/google-maps-reviews-scraper",
-  ),
-  apifyToken: text("apify_token"),
-  aktif: boolean("aktif").default(true),
-  zonaWaktu: text("zona_waktu").default("Asia/Jakarta"),
-  jamSinkron: integer("jam_sinkron").default(6),
-  dibuatPada: timestamp("dibuat_pada", { mode: "date" }).defaultNow().notNull(),
-  diperbaruiPada: timestamp("diperbarui_pada", { mode: "date" })
-    .defaultNow()
-    .notNull(),
-});
-
-export const sinkronLog = pgTable(
-  "sinkron_log",
-  {
-    id: serial("id").primaryKey(),
-    rumahSakitId: integer("rumah_sakit_id")
-      .notNull()
-      .references(() => rumahSakit.id, { onDelete: "cascade" }),
-    dimulaiPada: timestamp("dimulai_pada", { mode: "date" })
-      .defaultNow()
-      .notNull(),
-    selesaiPada: timestamp("selesai_pada", { mode: "date" }),
-    status: text("status").notNull(),
-    ulasanBaru: integer("ulasan_baru").default(0),
-    ulasanDiproses: integer("ulasan_diproses").default(0),
-    ulasanKrisis: integer("ulasan_krisis").default(0),
-    pesanError: text("pesan_error"),
-    tipePemicu: text("tipe_pemicu").default("otomatis"),
-  },
-  (table) => [index("sinkron_log_rs_idx").on(table.rumahSakitId)],
-);
-
-export const analisis = pgTable(
-  "analisis",
-  {
-    id: serial("id").primaryKey(),
-    rumahSakitId: integer("rumah_sakit_id")
-      .notNull()
-      .references(() => rumahSakit.id, { onDelete: "cascade" }),
-    namaFile: text("nama_file").notNull(),
-    tanggalUnggah: timestamp("tanggal_unggah", { mode: "date" })
-      .defaultNow()
-      .notNull(),
-    status: statusAnalisisEnum("status").notNull().default("menunggu"),
-    totalUlasan: integer("total_ulasan").notNull().default(0),
-    ulasanDiproses: integer("ulasan_diproses").notNull().default(0),
-    totalPositif: integer("total_positif").notNull().default(0),
-    totalNegatif: integer("total_negatif").notNull().default(0),
-    totalNetral: integer("total_netral").notNull().default(0),
-    kondisiUmum: text("kondisi_umum"),
-    catatan: text("catatan"),
-    sidikJari: text("sidik_jari"),
-  },
-  (table) => [
-    index("analisis_sidik_jari_idx").on(table.sidikJari),
-    index("analisis_rs_idx").on(table.rumahSakitId),
-  ],
-);
-
-export const ulasan = pgTable(
-  "ulasan",
-  {
-    id: serial("id").primaryKey(),
-    analisisId: integer("analisis_id")
-      .notNull()
-      .references(() => analisis.id, { onDelete: "cascade" }),
-    rumahSakitId: integer("rumah_sakit_id")
-      .notNull()
-      .references(() => rumahSakit.id, { onDelete: "cascade" }),
-    reviewId: text("review_id").notNull().unique(),
-    namaPengulas: text("nama_pengulas"),
-    rating: integer("rating"),
-    teksUlasan: text("teks_ulasan").notNull(),
-    tanggalUlasan: text("tanggal_ulasan"),
-    bahasa: text("bahasa").default("id"),
-    sentimen: sentimenEnum("sentimen"),
-    sumberLabel: text("sumber_label"),
-    unitLayanan: text("unit_layanan"),
-    kategoriMasalah: text("kategori_masalah"),
-    faktorUrgensiMedis: boolean("faktor_urgensi_medis").default(false),
-    saranDrafBalasan: text("saran_draf_balasan"),
-    statusTindakLanjut: statusTindakLanjutEnum("status_tindak_lanjut").default(
-      "baru",
-    ),
-    ditinjauPada: timestamp("ditinjau_pada", { mode: "date" }),
-    ditinjauOleh: text("ditinjau_oleh"),
-    catatanInternal: text("catatan_internal"),
-    dataMentah: text("data_mentah"),
-    dibuatPada: timestamp("dibuat_pada", { mode: "date" })
-      .defaultNow()
-      .notNull(),
-    diperbaruiPada: timestamp("diperbarui_pada", { mode: "date" })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => [
-    index("ulasan_analisis_idx").on(table.analisisId),
-    index("ulasan_rs_idx").on(table.rumahSakitId),
-    index("ulasan_tanggal_idx").on(table.tanggalUlasan),
-    index("ulasan_status_idx").on(table.statusTindakLanjut),
-    index("ulasan_urgensi_idx").on(table.faktorUrgensiMedis),
-    uniqueIndex("ulasan_review_id_idx").on(table.reviewId),
-  ],
-);
-
-export const aspek = pgTable(
-  "aspek",
-  {
-    id: serial("id").primaryKey(),
-    namaAspek: text("nama_aspek").notNull(),
-  },
-  (table) => [uniqueIndex("aspek_nama_idx").on(table.namaAspek)],
-);
-
-export const hasilAspekUlasan = pgTable("hasil_aspek_ulasans", {
-  id: serial("id").primaryKey(),
-  ulasanId: integer("ulasan_id")
-    .notNull()
-    .references(() => ulasan.id, { onDelete: "cascade" }),
-  aspekId: integer("aspek_id")
-    .notNull()
-    .references(() => aspek.id, { onDelete: "cascade" }),
-  sentimenAspek: sentimenEnum("sentimen_aspek").notNull(),
-  kutipan: text("kutipan"),
-});
-
-export const kategoriMasalah = pgTable(
-  "kategori_masalah",
-  {
-    id: serial("id").primaryKey(),
-    nama: text("nama").notNull().unique(),
-    deskripsi: text("deskripsi"),
-    urutan: integer("urutan").default(0),
-    aktif: boolean("aktif").default(true),
-  },
-  (table) => [uniqueIndex("kategori_masalah_nama_idx").on(table.nama)],
-);
-
-export const unitLayanan = pgTable(
-  "unit_layanan",
-  {
-    id: serial("id").primaryKey(),
-    nama: text("nama").notNull().unique(),
-    deskripsi: text("deskripsi"),
-    urutan: integer("urutan").default(0),
-    aktif: boolean("aktif").default(true),
-  },
-  (table) => [uniqueIndex("unit_layanan_nama_idx").on(table.nama)],
-);
-
 export type Sentimen = "positif" | "negatif" | "netral";
 export type StatusAnalisis =
   | "menunggu"
@@ -205,7 +22,112 @@ export type KategoriMasalah =
   | "Kompetensi Medis"
   | "Lainnya";
 
-export type AnalisisRow = typeof analisis.$inferSelect;
-export type UlasanRow = typeof ulasan.$inferSelect;
-export type RumahSakitRow = typeof rumahSakit.$inferSelect;
-export type SinkronLogRow = typeof sinkronLog.$inferSelect;
+export interface RumahSakitRow {
+  id: number;
+  nama: string;
+  kode: string;
+  googleMapsPlaceId?: string | null;
+  apifyActorId?: string | null;
+  apifyToken?: string | null;
+  aktif: boolean | null;
+  zonaWaktu: string | null;
+  jamSinkron: number | null;
+  aiModel?: string | null;
+  aiApiKey?: string | null;
+  kopSurat?: string | null;
+  dibuatPada: Date | string;
+  diperbaruiPada: Date | string;
+}
+
+export interface SinkronLogRow {
+  id: number;
+  rumahSakitId: number;
+  dimulaiPada: Date | string;
+  selesaiPada?: Date | string | null;
+  status: string;
+  ulasanBaru?: number | null;
+  ulasanDiproses?: number | null;
+  ulasanKrisis?: number | null;
+  pesanError?: string | null;
+  tipePemicu?: string | null;
+}
+
+export interface AnalisisRow {
+  id: number;
+  rumahSakitId: number;
+  namaFile: string;
+  tanggalUnggah: Date | string;
+  status: StatusAnalisis;
+  totalUlasan: number;
+  ulasanDiproses: number;
+  totalPositif: number;
+  totalNegatif: number;
+  totalNetral: number;
+  kondisiUmum?: string | null;
+  catatan?: string | null;
+  sidikJari?: string | null;
+}
+
+export interface UlasanRow {
+  id: number;
+  analisisId: number;
+  rumahSakitId: number;
+  reviewId: string;
+  namaPengulas?: string | null;
+  rating?: number | null;
+  teksUlasan: string;
+  tanggalUlasan?: string | null;
+  bahasa?: string | null;
+  sentimen?: Sentimen | null;
+  sumberLabel?: string | null;
+  unitLayanan?: string | null;
+  kategoriMasalah?: string | null;
+  faktorUrgensiMedis?: boolean | null;
+  saranDrafBalasan?: string | null;
+  statusTindakLanjut?: StatusTindakLanjut | null;
+  ditinjauPada?: Date | string | null;
+  ditinjauOleh?: string | null;
+  catatanInternal?: string | null;
+  dataMentah?: string | null;
+  dibuatPada?: Date | string;
+  diperbaruiPada?: Date | string;
+}
+
+export interface AspekRow {
+  id: number;
+  namaAspek: string;
+}
+
+export interface HasilAspekUlasanRow {
+  id: number;
+  ulasanId: number;
+  aspekId: number;
+  sentimenAspek: Sentimen;
+  kutipan?: string | null;
+}
+
+export interface KategoriMasalahRow {
+  id: number;
+  nama: string;
+  deskripsi?: string | null;
+  urutan?: number | null;
+  aktif?: boolean | null;
+}
+
+export interface UnitLayananRow {
+  id: number;
+  nama: string;
+  deskripsi?: string | null;
+  urutan?: number | null;
+  aktif?: boolean | null;
+}
+
+// Constant table names for Supabase REST API queries
+export const rumahSakit = "rumah_sakit";
+export const sinkronLog = "sinkron_log";
+export const analisis = "analisis";
+export const ulasan = "ulasan";
+export const aspek = "aspek";
+export const hasilAspekUlasan = "hasil_aspek_ulasans";
+export const kategoriMasalah = "kategori_masalah";
+export const unitLayanan = "unit_layanan";

@@ -1,10 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { type DateRange } from "react-day-picker";
+import { format } from "date-fns";
 import { Info, ThumbsDown, ThumbsUp } from "@phosphor-icons/react";
 import { PageHeader } from "@/components/page-header";
 import { LoadingSection } from "@/components/states";
-import { PilihPeriode } from "@/components/pilih-periode";
+import { PilihPeriodeRentang } from "@/components/pilih-periode";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { AnalisisItem, StatistikAspek } from "@/lib/types";
 
@@ -17,23 +27,31 @@ interface DataAspek {
 export default function AspekPage() {
   const [daftarAnalisis, setDaftarAnalisis] = useState<AnalisisItem[]>([]);
   const [analisisId, setAnalisisId] = useState<number | null>(null);
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [data, setData] = useState<DataAspek | null>(null);
   const [pernahDimuat, setPernahDimuat] = useState(false);
 
   useEffect(() => {
     fetch("/api/analisis")
       .then((res) => res.json())
-      .then((dataRes: { analisis: AnalisisItem[] }) => {
-        setDaftarAnalisis(dataRes.analisis);
-        const selesai = dataRes.analisis.find((a) => a.status === "selesai");
+      .then((dataRes: { analisis?: AnalisisItem[] }) => {
+        const list = Array.isArray(dataRes?.analisis) ? dataRes.analisis : [];
+        setDaftarAnalisis(list);
+        const selesai = list.find((a) => a.status === "selesai");
         if (selesai) setAnalisisId(selesai.id);
-      });
+      })
+      .catch(() => setDaftarAnalisis([]));
   }, []);
 
   useEffect(() => {
     if (analisisId === null) return;
     let aktif = true;
-    fetch(`/api/analisis/${analisisId}/aspek`)
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.set("dari", format(dateRange.from, "yyyy-MM-dd"));
+    if (dateRange?.to) params.set("sampai", format(dateRange.to, "yyyy-MM-dd"));
+
+    const queryStr = params.toString() ? `?${params.toString()}` : "";
+    fetch(`/api/analisis/${analisisId}/aspek${queryStr}`)
       .then((res) => res.json())
       .then((hasil: DataAspek) => {
         if (!aktif) return;
@@ -46,7 +64,7 @@ export default function AspekPage() {
     return () => {
       aktif = false;
     };
-  }, [analisisId]);
+  }, [analisisId, dateRange]);
 
   const memuat = analisisId !== null && !pernahDimuat;
   const analisisAktif = daftarAnalisis.find((a) => a.id === analisisId);
@@ -58,27 +76,27 @@ export default function AspekPage() {
         title="Analisis Aspek"
         description="Aspek yang paling banyak dikeluhkan perlu diperbaiki; yang paling banyak dipuji perlu dipertahankan."
       >
-        <PilihPeriode daftar={daftarAnalisis} dipilih={analisisId} onChange={setAnalisisId} />
+        <PilihPeriodeRentang
+          dateRange={dateRange}
+          onChange={setDateRange}
+        />
       </PageHeader>
 
       {memuat ? (
         <LoadingSection rows={3} />
       ) : analisisId === null ? (
-        <div className="reveal rounded-xl border border-dashed border-border bg-card px-6 py-16 text-center text-sm text-muted-foreground">
+        <div className="reveal rounded-xl border border-dashed border-border bg-card px-6 py-16 text-center text-xs text-muted-foreground">
           Belum ada hasil analisis yang selesai. Unggah data ulasan terlebih dahulu.
         </div>
       ) : tanpaAspek ? (
-        <div className="reveal rounded-xl border border-amber-200 bg-amber-50 px-6 py-10 text-center">
-          <Info className="mx-auto size-8 text-amber-600" weight="duotone" />
-          <h3 className="mt-3 text-base font-semibold text-amber-950">Data aspek belum tersedia</h3>
-          <p className="mx-auto mt-1.5 max-w-lg text-sm leading-relaxed text-amber-900/80">
-            Pengenalan aspek layanan dilakukan oleh AI Gateway. Analisis ini diproses tanpa AI Gateway
-            (fallback rating), sehingga daftar aspek kosong. Atur OPENCODE_ZEN_API_KEY lalu gunakan tombol
-            &quot;Proses ulang dengan AI&quot; di halaman Beranda untuk mendapatkan analisis aspek.
-          </p>
-          {analisisAktif?.catatan && (
-            <p className="mx-auto mt-3 max-w-lg text-xs text-amber-900/60">{analisisAktif.catatan}</p>
-          )}
+        <div className="reveal rounded-xl border border-amber-200 bg-amber-50/80 p-6 text-center space-y-2.5">
+          <Info className="mx-auto size-7 text-amber-600" weight="duotone" />
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-amber-950">Data Aspek Layanan Belum Tersedia</h3>
+            <p className="mx-auto max-w-xl text-xs leading-relaxed text-amber-900/90">
+              Analisis aspek spesifik memerlukan pemrosesan kecerdasan buatan (AI). Ulasan saat ini telah dikelompokkan secara otomatis berdasarkan rating. Silakan konfigurasi Model AI dan API Key di halaman Pengaturan RS untuk mengaktifkan analisis aspek secara penuh.
+            </p>
+          </div>
         </div>
       ) : (
         data && (
@@ -90,7 +108,7 @@ export default function AspekPage() {
                     <ThumbsDown className="size-4 text-rose-600" weight="duotone" />
                   </span>
                   <div>
-                    <h3 className="font-semibold leading-none tracking-tight">Perlu Diperbaiki</h3>
+                    <h3 className="font-semibold leading-none tracking-tight text-sm">Perlu Diperbaiki</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Aspek dengan keluhan terbanyak, diurutkan dari yang paling mendesak.
                     </p>
@@ -98,7 +116,7 @@ export default function AspekPage() {
                 </div>
                 <div className="divide-y divide-border">
                   {data.perluDiperbaiki.length === 0 && (
-                    <p className="px-6 py-8 text-center text-sm text-muted-foreground">
+                    <p className="px-6 py-8 text-center text-xs text-muted-foreground">
                       Tidak ada keluhan yang terdeteksi.
                     </p>
                   )}
@@ -114,7 +132,7 @@ export default function AspekPage() {
                     <ThumbsUp className="size-4 text-emerald-600" weight="duotone" />
                   </span>
                   <div>
-                    <h3 className="font-semibold leading-none tracking-tight">Perlu Dipertahankan</h3>
+                    <h3 className="font-semibold leading-none tracking-tight text-sm">Perlu Dipertahankan</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Aspek dengan pujian terbanyak yang menjadi kekuatan layanan.
                     </p>
@@ -122,7 +140,7 @@ export default function AspekPage() {
                 </div>
                 <div className="divide-y divide-border">
                   {data.perluDipertahankan.length === 0 && (
-                    <p className="px-6 py-8 text-center text-sm text-muted-foreground">
+                    <p className="px-6 py-8 text-center text-xs text-muted-foreground">
                       Tidak ada pujian yang terdeteksi.
                     </p>
                   )}
@@ -135,50 +153,48 @@ export default function AspekPage() {
 
             <div className="reveal overflow-hidden rounded-xl border border-border bg-card" style={{ animationDelay: "140ms" }}>
               <div className="border-b border-border px-6 py-4">
-                <h3 className="font-semibold leading-none tracking-tight">Nilai Setiap Aspek</h3>
+                <h3 className="font-semibold leading-none tracking-tight text-sm">Nilai Setiap Aspek</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Perbandingan jumlah ulasan positif dan negatif yang menyebut tiap aspek.
                 </p>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left">
-                      <th className="h-10 px-6 text-xs font-medium uppercase tracking-wide text-muted-foreground">Aspek</th>
-                      <th className="h-10 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Positif</th>
-                      <th className="h-10 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Netral</th>
-                      <th className="h-10 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Negatif</th>
-                      <th className="h-10 px-6 text-xs font-medium uppercase tracking-wide text-muted-foreground">Perbandingan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...data.aspek]
-                      .sort((a, b) => b.positif + b.negatif + b.netral - (a.positif + a.negatif + a.netral))
-                      .map((item) => {
-                        const totalAspek = item.positif + item.negatif + item.netral;
-                        return (
-                          <tr key={item.id} className="border-b border-border last:border-0">
-                            <td className="px-6 py-3 font-medium capitalize">{item.namaAspek}</td>
-                            <td className="px-3 py-3 font-mono tabular-nums text-emerald-600">{item.positif}</td>
-                            <td className="px-3 py-3 font-mono tabular-nums text-amber-600">{item.netral}</td>
-                            <td className="px-3 py-3 font-mono tabular-nums text-rose-600">{item.negatif}</td>
-                            <td className="px-6 py-3">
-                              <div className="flex h-2 w-44 overflow-hidden rounded-full bg-muted">
-                                {totalAspek > 0 && (
-                                  <>
-                                    <div className="bg-emerald-500" style={{ width: `${(item.positif / totalAspek) * 100}%` }} />
-                                    <div className="bg-amber-400" style={{ width: `${(item.netral / totalAspek) * 100}%` }} />
-                                    <div className="bg-rose-500" style={{ width: `${(item.negatif / totalAspek) * 100}%` }} />
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
+              <Table className="text-xs">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-48">Aspek</TableHead>
+                    <TableHead className="w-24">Positif</TableHead>
+                    <TableHead className="w-24">Netral</TableHead>
+                    <TableHead className="w-24">Negatif</TableHead>
+                    <TableHead>Perbandingan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...data.aspek]
+                    .sort((a, b) => b.positif + b.negatif + b.netral - (a.positif + a.negatif + a.netral))
+                    .map((item) => {
+                      const totalAspek = item.positif + item.negatif + item.netral;
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium capitalize text-xs">{item.namaAspek}</TableCell>
+                          <TableCell className="font-mono tabular-nums text-emerald-600 text-xs">{item.positif}</TableCell>
+                          <TableCell className="font-mono tabular-nums text-amber-600 text-xs">{item.netral}</TableCell>
+                          <TableCell className="font-mono tabular-nums text-rose-600 text-xs">{item.negatif}</TableCell>
+                          <TableCell>
+                            <div className="flex h-2 w-44 overflow-hidden rounded-full bg-muted">
+                              {totalAspek > 0 && (
+                                <>
+                                  <div className="bg-emerald-500" style={{ width: `${(item.positif / totalAspek) * 100}%` }} />
+                                  <div className="bg-amber-400" style={{ width: `${(item.netral / totalAspek) * 100}%` }} />
+                                  <div className="bg-rose-500" style={{ width: `${(item.negatif / totalAspek) * 100}%` }} />
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                </TableBody>
+              </Table>
             </div>
           </div>
         )
@@ -213,7 +229,7 @@ function BarisAspek({
           >
             {peringkat}
           </span>
-          <span className="truncate text-sm font-medium capitalize">{item.namaAspek}</span>
+          <span className="truncate text-xs font-semibold capitalize">{item.namaAspek}</span>
         </div>
         <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
           {nilaiUtama} {fokus === "negatif" ? "keluhan" : "pujian"} · {total} penyebutan

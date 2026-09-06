@@ -126,9 +126,14 @@ function UnggahInner() {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Non-JSON response
+      }
       if (!res.ok) {
-        setError(data.error ?? "Gagal mengunggah file.");
+        setError(data?.error ?? data?.message ?? `Gagal mengunggah file (Status ${res.status}).`);
         setTahap("pilih");
         return;
       }
@@ -138,8 +143,8 @@ function UnggahInner() {
       } else {
         setTahap("pratinjau");
       }
-    } catch {
-      setError("Gagal terhubung ke server.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal terhubung ke server.");
       setTahap("pilih");
     } finally {
       setUnggahBerjalan(false);
@@ -151,9 +156,9 @@ function UnggahInner() {
     setBerhentiJalan(true);
     try {
       await fetch(`/api/analisis/${idAktif}/stop`, { method: "POST" });
-    } catch {
+    } catch (err) {
       setBerhentiJalan(false);
-      setError("Gagal terhubung ke server.");
+      setError(err instanceof Error ? err.message : "Gagal terhubung ke server.");
     }
   };
 
@@ -163,16 +168,21 @@ function UnggahInner() {
     setBerhentiJalan(false);
     try {
       const res = await fetch(`/api/analisis/${hasil.id}/process`, { method: "POST" });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Non-JSON response
+      }
       if (!res.ok) {
-        setError(data.error ?? "Gagal memulai analisis.");
+        setError(data?.error ?? data?.message ?? "Gagal memulai analisis.");
         return;
       }
       setProgres({ diproses: 0, total: hasil.totalUlasan });
       setTahap("berjalan");
       pantauStatus(hasil.id);
-    } catch {
-      setError("Gagal terhubung ke server.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal terhubung ke server.");
     }
   };
 
@@ -246,7 +256,7 @@ function UnggahInner() {
           <div className="rounded-xl border border-border bg-card py-6">
             <div className="flex flex-col gap-1.5 px-6 md:flex-row md:items-center md:justify-between">
               <div>
-                <h3 className="font-semibold leading-none tracking-tight">Pratinjau Data</h3>
+                <h3 className="text-sm font-semibold leading-none tracking-tight">Pratinjau Data</h3>
                 <p className="mt-1.5 text-sm text-muted-foreground">
                   {hasil.totalUlasan} ulasan terbaca dari {hasil.namaFile}
                 </p>
