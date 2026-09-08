@@ -26,8 +26,8 @@ CREATE TABLE rumah_sakit (
     aktif BOOLEAN DEFAULT true,
     zona_waktu TEXT DEFAULT 'Asia/Jakarta',
     jam_sinkron INTEGER DEFAULT 6,
-    ai_model TEXT DEFAULT 'NVIDIA Nemotron',
-    ai_api_key TEXT,
+    ai_model TEXT DEFAULT 'gemini-3.5-flash-lite',
+    ai_api_key TEXT, -- deprecated: key AI wajib disimpan di environment server
     dibuat_pada TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     diperbarui_pada TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
-import { ulasan, UlasanRow } from "@/lib/db/schema";
-import { prosesBatchAnalisis } from "@/lib/ai-hospital";
+import { rumahSakit, ulasan, UlasanRow } from "@/lib/db/schema";
+import { analisisBatchUlasanDenganAI } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
@@ -34,12 +34,21 @@ export async function POST(req: Request) {
   }
 
   const { data: ulasanDataRaw } = await supabase.from(ulasan)
-    .select("id, teks_ulasan, rating")
+    .select("id, teks_ulasan, rating, rumah_sakit_id")
     .in("id", targetIds);
 
   const ulasanData = toCamel<UlasanRow[]>(ulasanDataRaw ?? []);
 
-  const hasil = await prosesBatchAnalisis(ulasanData.map((u) => ({ id: u.id, teksUlasan: u.teksUlasan, rating: u.rating ?? null })));
+  const targetRumahSakitId = Number(rumahSakitId) || ulasanData[0]?.rumahSakitId;
+  const { data: konfigurasiRS } = targetRumahSakitId
+    ? await supabase.from(rumahSakit).select("ai_model").eq("id", targetRumahSakitId).limit(1)
+    : { data: null };
+  const modelAI = konfigurasiRS?.[0]?.ai_model ?? null;
+
+  const hasil = await analisisBatchUlasanDenganAI(
+    ulasanData.map((u) => ({ id: u.id, teksUlasan: u.teksUlasan, rating: u.rating ?? null })),
+    modelAI
+  );
 
   let diproses = 0;
   let krisis = 0;

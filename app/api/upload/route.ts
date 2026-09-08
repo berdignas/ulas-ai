@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { supabase, toCamel, toSnake, getSqlClient } from "@/lib/db";
 import { analisis, ulasan, rumahSakit, AnalisisRow } from "@/lib/db/schema";
 import { parseUlasanFile } from "@/lib/parser";
-import { mulaiProsesAnalisis } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
 
@@ -179,9 +178,6 @@ export async function POST(req: Request) {
       }
     }
   }
-
-  // Otomatis jalankan analisis aspek & sentimen menggunakan NVIDIA AI
-  mulaiProsesAnalisis(dibuatId);
 
   return NextResponse.json({
     id: dibuatId,

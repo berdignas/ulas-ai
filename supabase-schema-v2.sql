@@ -6,8 +6,8 @@
 -- 1. Penambahan Kolom Konfigurasi AI pada Tabel rumah_sakit
 -- Menyimpan nama model AI dan API key per rumah sakit di database
 ALTER TABLE rumah_sakit
-  ADD COLUMN IF NOT EXISTS ai_model TEXT DEFAULT 'NVIDIA Nemotron',
-  ADD COLUMN IF NOT EXISTS ai_api_key TEXT;
+  ADD COLUMN IF NOT EXISTS ai_model TEXT DEFAULT 'gemini-3.5-flash-lite',
+  ADD COLUMN IF NOT EXISTS ai_api_key TEXT; -- deprecated, jangan simpan secret di database
 
 -- 2. Tabel Admin untuk Login Sederhana (Username & Password)
 CREATE TABLE IF NOT EXISTS admin (

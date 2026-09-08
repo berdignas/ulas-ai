@@ -1,11 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import {
   Building,
   Cpu,
   FloppyDisk,
-  Globe,
   Shield,
   SpinnerGap,
   TestTube,
@@ -36,7 +35,16 @@ type RumahSakit = {
   zonaWaktu: string;
   jamSinkron: number;
   aiModel?: string | null;
-  aiApiKey?: string | null;
+};
+
+type AIModelOption = {
+  id: string;
+  provider: "gemini" | "nvidia" | "opencode";
+  providerLabel: string;
+  label: string;
+  description: string;
+  profile: "cepat" | "seimbang" | "mendalam" | "kustom";
+  configured: boolean;
 };
 
 function PengaturanContent() {
@@ -55,11 +63,13 @@ function PengaturanContent() {
     aktif: true,
     zonaWaktu: "Asia/Jakarta",
     jamSinkron: 6,
-    aiModel: "Google Gemini (Antigravity)",
-    aiApiKey: "AIzaSyBBHXVSTwd83YPx1LKpavG2VTqL9yGdU4o",
+    aiModel: "gemini-3.5-flash-lite",
   });
 
-  const [loading, setLoading] = useState(false);
+  const [modelOptions, setModelOptions] = useState<AIModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -68,24 +78,23 @@ function PengaturanContent() {
   const [testing, setTesting] = useState(false);
   const [testingAI, setTestingAI] = useState(false);
 
-  const loadLocalAIConfig = () => {
-    if (typeof window !== "undefined") {
-      const model = localStorage.getItem("ulas_ai_model") || "Google Gemini (Antigravity)";
-      const key = localStorage.getItem("ulas_ai_key") || "AIzaSyBBHXVSTwd83YPx1LKpavG2VTqL9yGdU4o";
-      return { model, key };
-    }
-    return { model: "Google Gemini (Antigravity)", key: "AIzaSyBBHXVSTwd83YPx1LKpavG2VTqL9yGdU4o" };
-  };
-
-  const fetchList = async () => {
-    setLoading(true);
+  const fetchList = useCallback(async () => {
     try {
-      const res = await fetch("/api/rumah-sakit");
+      const [res, modelRes] = await Promise.all([
+        fetch("/api/rumah-sakit"),
+        fetch("/api/ai/models"),
+      ]);
       const data = await res.json();
+      const modelData = await modelRes.json() as { models?: AIModelOption[]; defaultModel?: string };
       const list: RumahSakit[] = data.rumahSakit ?? [];
+      const options = Array.isArray(modelData.models) ? modelData.models : [];
+      const normalizeModel = (model?: string | null) =>
+        options.some((item) => item.id === model)
+          ? model!
+          : modelData.defaultModel || options.find((item) => item.configured)?.id || "gemini-3.5-flash-lite";
       setRumahSakitList(list);
-
-      const aiCfg = loadLocalAIConfig();
+      setModelOptions(options);
+      setModelsLoading(false);
 
       if (rsId && list.some((rs) => String(rs.id) === rsId)) {
         const rs = list.find((rs) => String(rs.id) === rsId);
@@ -100,8 +109,7 @@ function PengaturanContent() {
             aktif: Boolean(rs.aktif),
             zonaWaktu: rs.zonaWaktu ?? "Asia/Jakarta",
             jamSinkron: rs.jamSinkron ?? 6,
-            aiModel: rs.aiModel || aiCfg.model,
-            aiApiKey: rs.aiApiKey ?? aiCfg.key,
+            aiModel: normalizeModel(rs.aiModel),
           });
           if (rs.aiModel && typeof window !== "undefined") {
             localStorage.setItem("ulas_ai_model", rs.aiModel);
@@ -120,8 +128,7 @@ function PengaturanContent() {
           aktif: Boolean(firstRs.aktif),
           zonaWaktu: firstRs.zonaWaktu ?? "Asia/Jakarta",
           jamSinkron: firstRs.jamSinkron ?? 6,
-          aiModel: firstRs.aiModel || aiCfg.model,
-          aiApiKey: firstRs.aiApiKey ?? aiCfg.key,
+          aiModel: normalizeModel(firstRs.aiModel),
         });
         if (firstRs.aiModel && typeof window !== "undefined") {
           localStorage.setItem("ulas_ai_model", firstRs.aiModel);
@@ -132,16 +139,17 @@ function PengaturanContent() {
       console.error(e);
     } finally {
       setLoading(false);
+      setModelsLoading(false);
     }
-  };
+  }, [rsId, selectedId]);
 
   useEffect(() => {
-    fetchList();
-  }, [rsId]);
+    const timer = window.setTimeout(() => void fetchList(), 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchList]);
 
   const handleSelect = (rs: RumahSakit) => {
     setSelectedId(rs.id);
-    const aiCfg = loadLocalAIConfig();
     setForm({
       nama: rs.nama,
       kode: rs.kode,
@@ -151,8 +159,9 @@ function PengaturanContent() {
       aktif: Boolean(rs.aktif),
       zonaWaktu: rs.zonaWaktu ?? "Asia/Jakarta",
       jamSinkron: rs.jamSinkron ?? 6,
-      aiModel: rs.aiModel || aiCfg.model,
-      aiApiKey: rs.aiApiKey ?? aiCfg.key,
+      aiModel: modelOptions.some((model) => model.id === rs.aiModel)
+        ? rs.aiModel!
+        : modelOptions.find((model) => model.configured)?.id || "gemini-3.5-flash-lite",
     });
     if (rs.aiModel && typeof window !== "undefined") {
       localStorage.setItem("ulas_ai_model", rs.aiModel);
@@ -164,7 +173,6 @@ function PengaturanContent() {
 
   const handleNew = () => {
     setSelectedId(null);
-    const aiCfg = loadLocalAIConfig();
     setForm({
       nama: "",
       kode: "",
@@ -174,8 +182,7 @@ function PengaturanContent() {
       aktif: true,
       zonaWaktu: "Asia/Jakarta",
       jamSinkron: 6,
-      aiModel: aiCfg.model,
-      aiApiKey: aiCfg.key,
+      aiModel: modelOptions.find((model) => model.configured)?.id || "gemini-3.5-flash-lite",
     });
     setLastAction(null);
     setTestResult(null);
@@ -216,8 +223,7 @@ function PengaturanContent() {
       }
 
       if (typeof window !== "undefined") {
-        localStorage.setItem("ulas_ai_model", form.aiModel || "NVIDIA Nemotron");
-        localStorage.setItem("ulas_ai_key", form.aiApiKey || "");
+        localStorage.setItem("ulas_ai_model", form.aiModel);
         window.dispatchEvent(new Event("ulas_ai_config_updated"));
       }
 
@@ -278,8 +284,8 @@ function PengaturanContent() {
   };
 
   const handleTestAI = async () => {
-    if (!form.aiApiKey && !form.aiModel) {
-      setTestResult({ sukses: false, pesan: "Nama Model AI dan API Key wajib diisi" });
+    if (!form.aiModel) {
+      setTestResult({ sukses: false, pesan: "Pilih model AI terlebih dahulu" });
       return;
     }
     setTestingAI(true);
@@ -288,7 +294,7 @@ function PengaturanContent() {
       const res = await fetch("/api/ai/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: form.aiModel, apiKey: form.aiApiKey }),
+        body: JSON.stringify({ model: form.aiModel }),
       });
       const data = await res.json();
       setTestResult({
@@ -304,6 +310,8 @@ function PengaturanContent() {
       setTestingAI(false);
     }
   };
+
+  const selectedModel = modelOptions.find((model) => model.id === form.aiModel);
 
   if (loading) {
     return <LoadingSection rows={3} />;
@@ -522,15 +530,24 @@ function PengaturanContent() {
 
               {/* Row 6: Konfigurasi Model AI Gateway */}
               <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/40 dark:bg-blue-950/20 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Cpu className="size-4 text-blue-600" weight="duotone" />
+                    <Cpu className="size-4 text-blue-600" weight="duotone" aria-hidden="true" />
                     <h4 className="text-xs font-bold uppercase tracking-wider text-blue-950 dark:text-blue-200">
-                      Konfigurasi Model AI Gateway
+                      Model Analisis AI
                     </h4>
                   </div>
-                  <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                    Aktif: {form.aiModel.includes("Gemini") || form.aiModel.includes("Antigravity") ? "Google Gemini (Antigravity)" : form.aiModel}
+                  <span
+                    role="status"
+                    aria-atomic="true"
+                    className={cn(
+                      "text-[11px] font-semibold px-2 py-0.5 rounded-full border",
+                      selectedModel?.configured
+                        ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                        : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                    )}
+                  >
+                    {selectedModel?.configured ? "Siap digunakan" : "Key belum tersedia"}
                   </span>
                 </div>
 
@@ -539,73 +556,72 @@ function PengaturanContent() {
                   <span className="text-xs text-muted-foreground mr-1">Preset:</span>
                   <button
                     type="button"
+                    disabled={!modelOptions.some((model) => model.provider === "gemini" && model.configured)}
                     onClick={() =>
                       setForm((prev) => ({
                         ...prev,
-                        aiModel: "Google Gemini (Antigravity)",
-                        aiApiKey: "AIzaSyBBHXVSTwd83YPx1LKpavG2VTqL9yGdU4o",
+                        aiModel: "gemini-3.5-flash-lite",
                       }))
                     }
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
-                      form.aiModel.includes("Gemini") || form.aiModel.includes("Antigravity")
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+                      selectedModel?.provider === "gemini"
                         ? "bg-blue-600 text-white border-blue-600 shadow-xs"
                         : "bg-background border-border text-foreground hover:bg-muted"
                     }`}
                   >
-                    ✦ Google Gemini (Antigravity)
+                    Gemini cepat
                   </button>
                   <button
                     type="button"
+                    disabled={!modelOptions.some((model) => model.provider === "nvidia" && model.configured)}
                     onClick={() =>
                       setForm((prev) => ({
                         ...prev,
-                        aiModel: "NVIDIA Nemotron",
+                        aiModel: modelOptions.find((model) => model.provider === "nvidia")?.id ?? form.aiModel,
                       }))
                     }
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
-                      form.aiModel.includes("Nemotron") || form.aiModel.includes("NVIDIA")
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+                      selectedModel?.provider === "nvidia"
                         ? "bg-blue-600 text-white border-blue-600 shadow-xs"
                         : "bg-background border-border text-foreground hover:bg-muted"
                     }`}
                   >
-                    NVIDIA Nemotron
+                    NVIDIA terkonfigurasi
                   </button>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 pt-1">
                   <div className="space-y-1.5 sm:col-span-1">
                     <Label htmlFor="aiModel" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Nama Model AI *
+                      Pilih model AI *
                     </Label>
-                    <Input
+                    <select
                       id="aiModel"
                       name="aiModel"
                       value={form.aiModel}
                       onChange={handleChange}
-                      placeholder="Contoh: Google Gemini (Antigravity)"
-                      disabled={saving}
-                      className="h-9 text-xs bg-background font-medium"
-                    />
+                      disabled={saving || modelsLoading}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {modelOptions.map((model) => (
+                        <option key={`${model.provider}:${model.id}`} value={model.id} disabled={!model.configured}>
+                          {model.label} · {model.profile}{model.configured ? "" : " (key belum tersedia)"}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
-                  <div className="space-y-1.5 sm:col-span-1">
-                    <Label htmlFor="aiApiKey" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      API Key Model AI *
-                    </Label>
-                    <Input
-                      id="aiApiKey"
-                      name="aiApiKey"
-                      type="password"
-                      value={form.aiApiKey}
-                      onChange={handleChange}
-                      placeholder="AIzaSy... atau nvapi-..."
-                      disabled={saving}
-                      className="h-9 font-mono text-xs bg-background"
-                    />
+                  <div className="rounded-lg border border-border/80 bg-background/70 px-3 py-2.5 sm:col-span-1">
+                    <p className="text-xs font-semibold text-foreground">
+                      {selectedModel?.providerLabel ?? "Memuat provider…"}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {selectedModel?.description ?? "Mengambil daftar model yang tersedia dari server."}
+                    </p>
                   </div>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Model AI dan API Key ini digunakan untuk analisis sentimen, ekstraksi unit layanan, krisis medis, dan saran draf balasan ulasan.
+                  Pilihan disimpan per rumah sakit. API key tetap aman di environment Vercel dan tidak dikirim ke browser atau Supabase.
                 </p>
               </div>
 
@@ -680,7 +696,7 @@ function PengaturanContent() {
                   variant="outline"
                   type="button"
                   onClick={handleTestAI}
-                  disabled={testingAI || !form.aiApiKey || saving || testing}
+                  disabled={testingAI || !selectedModel?.configured || saving || testing || modelsLoading}
                   className="gap-2 h-9 px-4 text-xs border-blue-200 hover:bg-blue-50/60 dark:border-blue-800 dark:hover:bg-blue-950/30 text-blue-700 dark:text-blue-300 cursor-pointer"
                 >
                   <Cpu className="size-4 text-blue-600" weight="duotone" />

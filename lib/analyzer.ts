@@ -1,8 +1,9 @@
 import { supabase, toCamel, toSnake } from "./db";
-import { analisis, aspek, hasilAspekUlasan, ulasan, UlasanRow, AnalisisRow, AspekRow } from "./db/schema";
+import { analisis, aspek, hasilAspekUlasan, rumahSakit, ulasan, UlasanRow, AnalisisRow, AspekRow } from "./db/schema";
 import {
   aiConfigured,
-  analisisUlasanDenganAI,
+  analisisBatchUlasanDenganAI,
+  HasilAnalisisUlasan,
   buatKondisiUmum,
   kondisiUmumFallback,
   sentimenFallbackDariRating,
@@ -35,18 +36,17 @@ export async function hapusAspekYatim(): Promise<void> {
   }
 }
 
-export function mulaiProsesAnalisis(analisisId: number): boolean {
-  if (runningProcesses.has(analisisId)) return false;
+export function mulaiProsesAnalisis(analisisId: number): Promise<void> | null {
+  if (runningProcesses.has(analisisId)) return null;
   runningProcesses.add(analisisId);
   stopRequests.delete(analisisId);
-  prosesAnalisis(analisisId).finally(() => {
+  return prosesAnalisis(analisisId).finally(() => {
     runningProcesses.delete(analisisId);
     stopRequests.delete(analisisId);
   });
-  return true;
 }
 
-const CONCURRENCY = 1;
+const BATCH_SIZE = Math.max(1, Math.min(15, Number(process.env.ANALYSIS_BATCH_SIZE) || 8));
 
 async function prosesAnalisis(analisisId: number): Promise<void> {
   try {
@@ -56,6 +56,12 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
 
     const { data: daftarUlasanRaw } = await supabase.from(ulasan).select("*").eq("analisis_id", analisisId);
     const daftarUlasan = toCamel<UlasanRow[]>(daftarUlasanRaw ?? []);
+    const rumahSakitId = daftarUlasan[0]?.rumahSakitId;
+    const { data: konfigurasiRSRaw } = rumahSakitId
+      ? await supabase.from(rumahSakit).select("ai_model").eq("id", rumahSakitId).limit(1)
+      : { data: null };
+    const modelAI = konfigurasiRSRaw?.[0]?.ai_model ?? null;
+    const aiTersedia = aiConfigured(modelAI);
 
     const belumDiproses = daftarUlasan.filter((u) => u.sumberLabel !== "ai");
     const sudahDiproses = daftarUlasan.filter((u) => u.sumberLabel === "ai");
@@ -77,8 +83,15 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     let gagalAI = 0;
     let pakaiAI = sudahDiproses.length > 0;
     const cacheAspek = new Map<string, number>();
+    const { data: daftarAspekRaw } = await supabase.from(aspek).select("*");
+    for (const itemAspek of toCamel<AspekRow[]>(daftarAspekRaw ?? [])) {
+      cacheAspek.set(itemAspek.namaAspek.trim().toLowerCase(), itemAspek.id);
+    }
 
-    const prosesSatuUlasan = async (item: UlasanRow) => {
+    const simpanSatuUlasan = async (
+      item: UlasanRow,
+      hasil: HasilAnalisisUlasan | null
+    ) => {
       let sentimen: string | null = null;
       let sumberLabel: string | null = null;
       let unitLayanan: string = "Lainnya";
@@ -86,9 +99,7 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
       let faktorUrgensiMedis: boolean = false;
       let saranDrafBalasan: string | null = null;
 
-      if (aiConfigured()) {
-        try {
-          const hasil = await analisisUlasanDenganAI(item.teksUlasan, item.rating ?? null);
+      if (hasil) {
           sentimen = hasil.sentimen;
           sumberLabel = "ai";
           unitLayanan = hasil.unitLayanan;
@@ -96,31 +107,13 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
           faktorUrgensiMedis = hasil.faktorUrgensiMedis;
           saranDrafBalasan = hasil.saranDrafBalasan;
           pakaiAI = true;
-
-          for (const itemAspek of hasil.aspek) {
-            const aspekId = await dapatkanAspekId(itemAspek.aspek, cacheAspek);
-            await supabase.from(hasilAspekUlasan)
-              .insert(toSnake({
-                ulasanId: item.id,
-                aspekId,
-                sentimenAspek: itemAspek.sentimen,
-                kutipan: itemAspek.kutipan,
-              }));
-          }
-        } catch (errorAI) {
-          gagalAI++;
-          console.warn(`[ai] ulasan ${item.id} gagal: ${errorAI instanceof Error ? errorAI.message : String(errorAI)}`);
-          sentimen = sentimenFallbackDariRating(item.rating ?? null);
-          sumberLabel = sentimen ? "rating" : null;
-          if (!sentimen) gagalDilabel++;
-        }
       } else {
         sentimen = sentimenFallbackDariRating(item.rating ?? null);
         sumberLabel = sentimen ? "rating" : null;
         if (!sentimen) gagalDilabel++;
       }
 
-      await supabase.from(ulasan)
+      return supabase.from(ulasan)
         .update(toSnake({
           sentimen,
           sumberLabel,
@@ -131,23 +124,63 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
           diperbaruiPada: new Date().toISOString(),
         }))
         .eq("id", item.id);
+    };
 
-      ulasanDiprosesCounter++;
+    for (let cursor = 0; cursor < belumDiproses.length; cursor += BATCH_SIZE) {
+      if (stopRequests.has(analisisId)) break;
+      const batch = belumDiproses.slice(cursor, cursor + BATCH_SIZE);
+      let hasilBatch = new Map<number, HasilAnalisisUlasan>();
+
+      if (aiTersedia) {
+        try {
+          hasilBatch = await analisisBatchUlasanDenganAI(
+            batch.map((item) => ({ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null })),
+            modelAI
+          );
+        } catch (errorAI) {
+          gagalAI += batch.length;
+          console.warn(`[ai] batch ${cursor / BATCH_SIZE + 1} gagal: ${errorAI instanceof Error ? errorAI.message : String(errorAI)}`);
+        }
+      }
+
+      const relasiAspek: Array<{
+        ulasanId: number;
+        aspekId: number;
+        sentimenAspek: string;
+        kutipan: string | null;
+      }> = [];
+
+      await pastikanAspekTersedia(
+        Array.from(hasilBatch.values()).flatMap((hasil) => hasil.aspek.map((item) => item.aspek)),
+        cacheAspek
+      );
+
+      for (const item of batch) {
+        const hasil = hasilBatch.get(item.id) ?? null;
+        if (hasil) {
+          for (const itemAspek of hasil.aspek) {
+            const aspekId = cacheAspek.get(itemAspek.aspek.trim().toLowerCase());
+            if (aspekId === undefined) continue;
+            relasiAspek.push({
+              ulasanId: item.id,
+              aspekId,
+              sentimenAspek: itemAspek.sentimen,
+              kutipan: itemAspek.kutipan,
+            });
+          }
+        }
+      }
+
+      await Promise.all(batch.map((item) => simpanSatuUlasan(item, hasilBatch.get(item.id) ?? null)));
+      if (relasiAspek.length > 0) {
+        await supabase.from(hasilAspekUlasan).insert(toSnake(relasiAspek));
+      }
+
+      ulasanDiprosesCounter += batch.length;
       await supabase.from(analisis)
         .update(toSnake({ ulasanDiproses: ulasanDiprosesCounter }))
         .eq("id", analisisId);
-    };
-
-    const antrean = [...belumDiproses];
-    const pekerja = Array.from({ length: Math.min(CONCURRENCY, antrean.length) }, async () => {
-      while (antrean.length > 0) {
-        if (stopRequests.has(analisisId)) return;
-        const item = antrean.shift();
-        if (!item) break;
-        await prosesSatuUlasan(item);
-      }
-    });
-    await Promise.all(pekerja);
+    }
 
     if (stopRequests.has(analisisId)) {
       const { data: terkiniRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
@@ -203,12 +236,12 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
       aspekPujianTeratas,
     };
 
-    let kondisiUmum = pakaiAI ? await buatKondisiUmum(stats) : null;
+    let kondisiUmum = pakaiAI ? await buatKondisiUmum(stats, modelAI) : null;
     if (!kondisiUmum) kondisiUmum = kondisiUmumFallback(stats);
 
     const catatan: string[] = [];
-    if (!aiConfigured()) {
-      catatan.push("Kunci API AI belum diatur; sentimen ditentukan dari rating bintang sebagai fallback.");
+    if (!aiTersedia) {
+      catatan.push(`API key untuk model ${modelAI || "AI terpilih"} belum diatur di Vercel; sentimen ditentukan dari rating bintang sebagai fallback.`);
     }
     if (gagalAI > 0) {
       catatan.push(`${gagalAI} ulasan gagal diproses AI dan diberi label dari rating bintang sebagai fallback.`);
@@ -233,6 +266,29 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     await supabase.from(analisis)
       .update(toSnake({ status: "gagal", catatan: `Proses analisis gagal: ${pesan}` }))
       .eq("id", analisisId);
+  }
+}
+
+async function pastikanAspekTersedia(namaAspek: string[], cache: Map<string, number>): Promise<void> {
+  const belumAda = Array.from(new Set(
+    namaAspek.map((nama) => nama.trim().toLowerCase()).filter((nama) => nama && !cache.has(nama))
+  ));
+  if (belumAda.length === 0) return;
+
+  const { data: rows, error } = await supabase
+    .from(aspek)
+    .upsert(belumAda.map((nama_aspek) => ({ nama_aspek })), { onConflict: "nama_aspek" })
+    .select("id,nama_aspek");
+
+  if (!error) {
+    for (const row of rows ?? []) {
+      cache.set(String(row.nama_aspek).trim().toLowerCase(), Number(row.id));
+    }
+  }
+
+  // Menjaga kompatibilitas bila konfigurasi PostgREST tidak mengizinkan bulk upsert.
+  for (const nama of belumAda) {
+    if (!cache.has(nama)) await dapatkanAspekId(nama, cache);
   }
 }
 
@@ -299,7 +355,11 @@ export async function dapatkanStatistikAspek(
   const mapStats = new Map<number, StatistikAspek>();
 
   if (hasilRaw) {
-    for (const item of hasilRaw as any[]) {
+    const hasilTerstruktur = hasilRaw as unknown as Array<{
+      sentimen_aspek: string;
+      aspek: { id: number; nama_aspek: string } | null;
+    }>;
+    for (const item of hasilTerstruktur) {
       const asp = item.aspek;
       if (!asp) continue;
       const id = asp.id;

@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
 import { rumahSakit, ulasan, sinkronLog, RumahSakitRow } from "@/lib/db/schema";
+import { getAIModelOptions } from "@/lib/ai-config";
 
 export const runtime = "nodejs";
+
+function modelValid(model: unknown): model is string {
+  return typeof model === "string" && getAIModelOptions().some((item) => item.id === model);
+}
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -10,7 +15,7 @@ export async function GET(req: Request) {
 
   let query = supabase
     .from(rumahSakit)
-    .select("*")
+    .select("id,nama,kode,google_maps_place_id,apify_actor_id,apify_token,aktif,zona_waktu,jam_sinkron,ai_model,kop_surat,dibuat_pada,diperbarui_pada")
     .order("id", { ascending: false });
 
   if (onlyActive) {
@@ -29,10 +34,12 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    console.log('[POST /api/rumah-sakit] body:', body);
-    const { nama, kode, googleMapsPlaceId, apifyActorId, apifyToken, zonaWaktu, jamSinkron, aiModel, aiApiKey } = body;
+    const { nama, kode, googleMapsPlaceId, apifyActorId, apifyToken, zonaWaktu, jamSinkron, aiModel } = body;
     if (!nama || !kode) {
       return NextResponse.json({ error: "Nama dan kode rumah sakit wajib diisi" }, { status: 400 });
+    }
+    if (!modelValid(aiModel)) {
+      return NextResponse.json({ error: "Model AI tidak tersedia." }, { status: 400 });
     }
 
     const { data: existing } = await supabase.from(rumahSakit).select("id").eq("kode", kode).limit(1);
@@ -52,7 +59,7 @@ export async function POST(req: Request) {
         jamSinkron: jamSinkron ?? 6,
         aktif: true,
         aiModel: aiModel ?? "Google Gemini (Antigravity)",
-        aiApiKey: aiApiKey ?? null,
+        aiApiKey: null,
         dibuatPada: new Date().toISOString(),
         diperbaruiPada: new Date().toISOString(),
       }))
@@ -62,7 +69,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Gagal membuat: " + (error?.message || "Unknown error") }, { status: 500 });
     }
 
-    console.log('[POST /api/rumah-sakit] created:', created);
     return NextResponse.json({ id: created[0].id });
   } catch (e) {
     console.error('[POST /api/rumah-sakit] error:', e);
@@ -72,9 +78,12 @@ export async function POST(req: Request) {
 
 export async function PUT(req: Request) {
   const body = await req.json();
-  const { id, nama, kode, googleMapsPlaceId, apifyActorId, apifyToken, zonaWaktu, jamSinkron, aktif, aiModel, aiApiKey, kopSurat } = body;
+  const { id, nama, kode, googleMapsPlaceId, apifyActorId, apifyToken, zonaWaktu, jamSinkron, aktif, aiModel, kopSurat } = body;
   if (!id || !nama || !kode) {
     return NextResponse.json({ error: "ID, nama dan kode wajib diisi" }, { status: 400 });
+  }
+  if (!modelValid(aiModel)) {
+    return NextResponse.json({ error: "Model AI tidak tersedia." }, { status: 400 });
   }
 
   const { data: existing } = await supabase.from(rumahSakit).select("id").eq("kode", kode).limit(1);
@@ -96,7 +105,8 @@ export async function PUT(req: Request) {
 
   // Only update fields if provided
   if (aiModel !== undefined) updatePayload.aiModel = aiModel;
-  if (aiApiKey !== undefined) updatePayload.aiApiKey = aiApiKey;
+  // API key AI hanya boleh berasal dari environment server, bukan database/browser.
+  updatePayload.aiApiKey = null;
   if (kopSurat !== undefined) updatePayload.kopSurat = kopSurat;
 
   const { data: updated, error } = await supabase

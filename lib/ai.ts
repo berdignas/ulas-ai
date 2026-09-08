@@ -1,3 +1,5 @@
+import { isAIModelConfigured, resolveAIConfig } from "./ai-config";
+
 export type Sentimen = "positif" | "negatif" | "netral";
 
 export type UnitLayanan =
@@ -31,6 +33,12 @@ export interface HasilAnalisisUlasan {
   saranDrafBalasan: string;
   kepercayaan: number;
   aspek: AspekHasil[];
+}
+
+export interface InputAnalisisUlasan {
+  id: number;
+  teksUlasan: string;
+  rating: number | null;
 }
 
 export const UNIT_LAYANAN_VALID: readonly UnitLayanan[] = [
@@ -97,6 +105,14 @@ Balas HANYA dengan JSON valid:
   ]
 }`;
 
+const BATCH_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+
+MODE BATCH (aturan ini menggantikan format jawaban tunggal di atas):
+- Input berisi array "ulasan". Analisis SETIAP item secara independen.
+- Salin "id" input ke hasil yang sesuai. Jangan menghilangkan, menggabungkan, atau menambah item.
+- Balas hanya dengan JSON valid berbentuk:
+{"hasil":[{"id":number,"unitLayanan":string,"kategoriMasalah":string,"sentimen":string,"faktorUrgensiMedis":boolean,"saranDrafBalasan":string,"kepercayaan":number,"aspek":[{"aspek":string,"sentimen":string,"kutipan":string}]}]}`;
+
 export function getEnv() {
   return {
     apiKey: process.env.OPENCODE_ZEN_API_KEY ?? "",
@@ -116,8 +132,8 @@ export function aiConfiguredGemini(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
-export function aiConfigured(): boolean {
-  return aiConfiguredGemini() || aiConfiguredNVIDIA() || Boolean(process.env.OPENCODE_ZEN_API_KEY);
+export function aiConfigured(preferredModel?: string | null): boolean {
+  return isAIModelConfigured(preferredModel);
 }
 
 const MAX_ATTEMPTS = 3;
@@ -127,7 +143,8 @@ const BACKOFF_429_MS = [30_000, 60_000, 120_000, 240_000, 300_000];
 
 export async function analisisUlasanDenganAI(
   teksUlasan: string,
-  rating: number | null
+  rating: number | null,
+  preferredModel?: string | null
 ): Promise<HasilAnalisisUlasan> {
   if (!teksUlasan || teksUlasan.trim() === "") {
     const sentimen = sentimenFallbackDariRating(rating) ?? "netral";
@@ -142,44 +159,37 @@ export async function analisisUlasanDenganAI(
     };
   }
 
-  if (aiConfiguredGemini()) {
-    let lastError: unknown = null;
-    const defaultModel = getEnvGemini().model;
-    const modelsToTry = [defaultModel, defaultModel === "gemini-3.5-flash" ? "gemini-3.6-flash" : "gemini-3.5-flash"];
-
-    for (const currentModel of modelsToTry) {
-      let jumlahPercobaan = 0;
-      while (jumlahPercobaan < 2) {
-        jumlahPercobaan++;
-        try {
-          return await callOnceGemini(teksUlasan, rating, 45_000, currentModel);
-        } catch (error) {
-          lastError = error;
-          const retryable =
-            error instanceof RetryableError ||
-            error instanceof TypeError ||
-            (error instanceof Error && error.name === "AbortError");
-          if (!retryable) break;
-
-          if (error instanceof RetryableError && error.status === 429) {
-            // Coba model lain yang kuotanya terpisah
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-      }
-    }
-    console.warn("[ai] Gemini gagal, mencoba fallback:", lastError);
+  const config = resolveAIConfig(preferredModel);
+  if (!config.apiKey) {
+    throw new Error(`API key ${config.providerLabel} belum dikonfigurasi di Vercel`);
   }
 
-  if (aiConfiguredNVIDIA()) {
+  if (config.provider === "gemini") {
+    let lastError: unknown = null;
+    for (let jumlahPercobaan = 0; jumlahPercobaan < 2; jumlahPercobaan++) {
+      try {
+        return await callOnceGemini(teksUlasan, rating, 45_000, config.model);
+      } catch (error) {
+        lastError = error;
+        const retryable =
+          error instanceof RetryableError ||
+          error instanceof TypeError ||
+          (error instanceof Error && error.name === "AbortError");
+        if (!retryable || jumlahPercobaan === 1) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Pemanggilan Gemini AI gagal");
+  }
+
+  if (config.provider === "nvidia") {
     let lastError: unknown = null;
     let jumlahPercobaan = 0;
 
     while (jumlahPercobaan < MAX_ATTEMPTS_429) {
       jumlahPercobaan++;
       try {
-        return await callOnceNVIDIA(teksUlasan, rating, 90_000);
+        return await callOnceNVIDIA(teksUlasan, rating, 90_000, config.model);
       } catch (error) {
         lastError = error;
         const retryable =
@@ -202,14 +212,14 @@ export async function analisisUlasanDenganAI(
     }
 
     throw lastError instanceof Error ? lastError : new Error("Pemanggilan NVIDIA AI gagal");
-  } else if (Boolean(process.env.OPENCODE_ZEN_API_KEY)) {
+  } else if (config.provider === "opencode") {
     let lastError: unknown = null;
     let jumlahPercobaan = 0;
 
     while (jumlahPercobaan < MAX_ATTEMPTS_429) {
       jumlahPercobaan++;
       try {
-        return await callOnce(teksUlasan, rating, 90_000);
+        return await callOnce(teksUlasan, rating, 90_000, config.model);
       } catch (error) {
         lastError = error;
         const retryable =
@@ -235,6 +245,51 @@ export async function analisisUlasanDenganAI(
   }
 
   throw new Error("Tidak ada kunci AI yang terkonfigurasi (Gemini, NVIDIA, atau OpenCode Zen)");
+}
+
+/**
+ * Memproses beberapa ulasan dalam satu panggilan model. Jalur Gemini memakai
+ * satu request sungguhan; provider lain tetap dijalankan paralel dengan
+ * rate-limiter yang sudah ada agar perilakunya tetap kompatibel.
+ */
+export async function analisisBatchUlasanDenganAI(
+  items: InputAnalisisUlasan[],
+  preferredModel?: string | null
+): Promise<Map<number, HasilAnalisisUlasan>> {
+  const hasil = new Map<number, HasilAnalisisUlasan>();
+  if (items.length === 0) return hasil;
+
+  const config = resolveAIConfig(preferredModel);
+  if (items.length === 1 || config.provider !== "gemini") {
+    const entries = await Promise.all(
+      items.map(async (item) => [
+        item.id,
+        await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel),
+      ] as const)
+    );
+    return new Map(entries);
+  }
+
+  let lastError: unknown = null;
+  for (let jumlahPercobaan = 0; jumlahPercobaan < 2; jumlahPercobaan++) {
+    try {
+      return await callOnceGeminiBatch(items, 60_000, config.model);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof RetryableError) && !(error instanceof TypeError)) break;
+      if (jumlahPercobaan === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+
+  console.warn("[ai] Gemini batch gagal, mencoba per ulasan:", lastError);
+  const entries = await Promise.all(
+    items.map(async (item) => [
+      item.id,
+      await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel),
+    ] as const)
+  );
+  return new Map(entries);
 }
 
 export function sentimenFallbackDariRating(rating: number | null): Sentimen | null {
@@ -327,27 +382,14 @@ function normalizeHasil(raw: unknown): HasilAnalisisUlasan {
   };
 }
 
-const MIN_REQUEST_GAP_MS = 1500;
-let waktuPermintaanTerakhir = 0;
-let antreanPermintaan: Promise<void> = Promise.resolve();
-
-async function tungguGiliran(): Promise<void> {
-  const giliran = antreanPermintaan;
-  let lepaskan: () => void = () => undefined;
-  antreanPermintaan = new Promise<void>((resolve) => {
-    lepaskan = resolve;
-  });
-  await giliran;
-  const sejakTerakhir = Date.now() - waktuPermintaanTerakhir;
-  if (sejakTerakhir < MIN_REQUEST_GAP_MS) {
-    await new Promise((r) => setTimeout(r, MIN_REQUEST_GAP_MS - sejakTerakhir));
-  }
-  waktuPermintaanTerakhir = Date.now();
-  lepaskan();
-}
-
-async function callOnce(teksUlasan: string, rating: number | null, timeoutMs: number): Promise<HasilAnalisisUlasan> {
-  const { apiKey, baseUrl, model } = getEnvNVIDIA();
+async function callOnce(
+  teksUlasan: string,
+  rating: number | null,
+  timeoutMs: number,
+  overrideModel?: string
+): Promise<HasilAnalisisUlasan> {
+  const { apiKey, baseUrl, model: defaultModel } = getEnv();
+  const model = overrideModel || defaultModel;
   await tungguGiliranNVIDIA();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -409,7 +451,7 @@ class RetryableError extends Error {
 function getEnvNVIDIA() {
   return {
     apiKey: process.env.NVIDIA_API_KEY ?? "",
-    baseUrl: (process.env.NVIDIA_BASE_URL ?? "https://api.nvidia.com/v1").replace(/\/$/, ""),
+    baseUrl: (process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1").replace(/\/$/, ""),
     model: process.env.NVIDIA_MODEL ?? "nemotron",
   };
 }
@@ -427,12 +469,13 @@ export async function buatKondisiUmum(stats: {
   totalNetral: number;
   aspekKeluhanTeratas: string[];
   aspekPujianTeratas: string[];
-}): Promise<string | null> {
-  if (!aiConfigured()) return null;
+}, preferredModel?: string | null): Promise<string | null> {
+  if (!aiConfigured(preferredModel)) return null;
+  const config = resolveAIConfig(preferredModel);
 
-  if (aiConfiguredGemini()) {
+  if (config.provider === "gemini") {
     try {
-      const { apiKey, model } = getEnvGemini();
+      const { apiKey, model } = config;
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -451,11 +494,11 @@ export async function buatKondisiUmum(stats: {
         if (content) return content;
       }
     } catch {
-      // Fallback to NVIDIA if Gemini fails
+      return null;
     }
   }
 
-  const { apiKey, baseUrl, model } = aiConfiguredNVIDIA() ? getEnvNVIDIA() : getEnv();
+  const { apiKey, baseUrl, model } = config;
 
   try {
     const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -501,8 +544,14 @@ export function kondisiUmumFallback(stats: {
   return kalimat;
 }
 
-async function callOnceNVIDIA(teksUlasan: string, rating: number | null, timeoutMs: number): Promise<HasilAnalisisUlasan> {
-  const { apiKey, baseUrl, model } = getEnvNVIDIA();
+async function callOnceNVIDIA(
+  teksUlasan: string,
+  rating: number | null,
+  timeoutMs: number,
+  overrideModel?: string
+): Promise<HasilAnalisisUlasan> {
+  const { apiKey, baseUrl, model: defaultModel } = getEnvNVIDIA();
+  const model = overrideModel || defaultModel;
   await tungguGiliranNVIDIA();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -652,3 +701,81 @@ async function callOnceGemini(
   }
 }
 
+async function callOnceGeminiBatch(
+  items: InputAnalisisUlasan[],
+  timeoutMs: number,
+  model: string
+): Promise<Map<number, HasilAnalisisUlasan>> {
+  const { apiKey } = getEnvGemini();
+  await tungguGiliranGemini();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: BATCH_SYSTEM_PROMPT }] },
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+        },
+        contents: [{
+          parts: [{
+            text: JSON.stringify({
+              ulasan: items.map((item) => ({
+                id: item.id,
+                rating: item.rating,
+                ulasan: item.teksUlasan,
+              })),
+            }),
+          }],
+        }],
+      }),
+      signal: controller.signal,
+    });
+
+    if (res.status === 429 || res.status >= 500) {
+      const errorText = await res.text();
+      const retryAfterDetik = Number(res.headers.get("retry-after"));
+      const retryAfterMs = Number.isFinite(retryAfterDetik) && retryAfterDetik > 0
+        ? retryAfterDetik * 1000
+        : undefined;
+      throw new RetryableError(
+        `Gemini batch error ${res.status}: ${errorText.slice(0, 150)}`,
+        res.status,
+        retryAfterMs
+      );
+    }
+    if (!res.ok) {
+      throw new Error(`Gemini batch error ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const parsed = extractJson(content);
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Format respons batch AI tidak valid");
+    }
+
+    const rows = (parsed as Record<string, unknown>).hasil;
+    if (!Array.isArray(rows)) throw new Error("Respons batch AI tidak memiliki array hasil");
+
+    const output = new Map<number, HasilAnalisisUlasan>();
+    for (const row of rows) {
+      if (typeof row !== "object" || row === null) continue;
+      const id = Number((row as Record<string, unknown>).id);
+      if (!items.some((item) => item.id === id) || output.has(id)) continue;
+      output.set(id, normalizeHasil(row));
+    }
+
+    if (output.size !== items.length) {
+      throw new Error(`Respons batch AI tidak lengkap (${output.size}/${items.length})`);
+    }
+    return output;
+  } finally {
+    clearTimeout(timer);
+  }
+}

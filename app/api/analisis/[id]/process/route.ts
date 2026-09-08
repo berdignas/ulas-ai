@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { supabase, toCamel } from "@/lib/db";
-import { analisis, AnalisisRow } from "@/lib/db/schema";
+import { analisis, rumahSakit, AnalisisRow } from "@/lib/db/schema";
 import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 import { aiConfigured } from "@/lib/ai";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -19,17 +20,30 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
+  const { data: konfigurasiRS } = await supabase
+    .from(rumahSakit)
+    .select("ai_model")
+    .eq("id", item.rumahSakitId)
+    .limit(1);
+  const modelAI = konfigurasiRS?.[0]?.ai_model ?? null;
+  const pakaiAI = aiConfigured(modelAI);
+
   if (prosesSedangBerjalan(analisisId)) {
     return NextResponse.json({ status: "berjalan", pesan: "Analisis sedang diproses." });
   }
 
   const ulangi = item.status === "selesai" || item.status === "berhenti";
-  mulaiProsesAnalisis(analisisId);
+  const proses = mulaiProsesAnalisis(analisisId);
+  if (!proses) {
+    return NextResponse.json({ status: "berjalan", pesan: "Analisis sedang diproses." });
+  }
+  after(() => proses);
   return NextResponse.json({
     status: "berjalan",
-    pakaiAI: aiConfigured(),
-    pesan: !aiConfigured()
-      ? "Analisis dimulai tanpa AI Gateway; sentimen ditentukan dari rating bintang."
+    pakaiAI,
+    model: modelAI,
+    pesan: !pakaiAI
+      ? "API key untuk model terpilih belum dikonfigurasi di Vercel; sentimen ditentukan dari rating bintang."
       : ulangi
         ? "Analisis diproses ulang. Setiap ulasan sedang dikirim ke AI Gateway."
         : "Analisis dimulai. Setiap ulasan sedang dikirim ke AI Gateway.",

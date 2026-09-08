@@ -79,18 +79,30 @@ function SidebarLink({ href, label, icon: Icon, step }: NavItem) {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  const [aiModelName, setAiModelName] = useState("Google Gemini (Antigravity)");
+  const [aiModelName, setAiModelName] = useState("Memuat model…");
+  const [aiModelConfigured, setAiModelConfigured] = useState(false);
 
   useEffect(() => {
-    function loadConfig() {
-      if (typeof window !== "undefined") {
-        const savedModel = localStorage.getItem("ulas_ai_model") || "Google Gemini (Antigravity)";
-        setAiModelName(savedModel);
+    async function loadConfig() {
+      const savedModel = localStorage.getItem("ulas_ai_model");
+      try {
+        const res = await fetch("/api/ai/models");
+        const data = await res.json() as {
+          defaultModel?: string;
+          models?: Array<{ id: string; label: string; configured: boolean }>;
+        };
+        const active = data.models?.find((model) => model.id === (savedModel || data.defaultModel));
+        setAiModelName(active?.label ?? savedModel ?? data.defaultModel ?? "Belum dipilih");
+        setAiModelConfigured(Boolean(active?.configured));
+      } catch {
+        setAiModelName(savedModel ?? "Status tidak tersedia");
+        setAiModelConfigured(false);
       }
     }
-    loadConfig();
-    window.addEventListener("ulas_ai_config_updated", loadConfig);
-    return () => window.removeEventListener("ulas_ai_config_updated", loadConfig);
+    void loadConfig();
+    const handleConfigUpdated = () => void loadConfig();
+    window.addEventListener("ulas_ai_config_updated", handleConfigUpdated);
+    return () => window.removeEventListener("ulas_ai_config_updated", handleConfigUpdated);
   }, []);
 
   const handleLogout = async () => {
@@ -160,13 +172,18 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {/* Model AI Connection Status */}
                 <div className="flex items-center gap-2">
                   <span className="relative flex size-2 shrink-0">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                    {aiModelConfigured && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />}
+                    <span className={cn("relative inline-flex size-2 rounded-full", aiModelConfigured ? "bg-emerald-500" : "bg-amber-500")} />
                   </span>
                   <span className="hidden text-muted-foreground md:inline">Model AI:</span>
                   <span className="font-semibold text-foreground">{aiModelName}</span>
-                  <Badge variant="outline" className="hidden sm:inline-flex bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] py-0 px-1.5 font-medium">
-                    Terhubung
+                  <Badge variant="outline" className={cn(
+                    "hidden sm:inline-flex text-[10px] py-0 px-1.5 font-medium",
+                    aiModelConfigured
+                      ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                      : "bg-amber-500/10 text-amber-700 border-amber-500/30"
+                  )}>
+                    {aiModelConfigured ? "Siap" : "Belum siap"}
                   </Badge>
                 </div>
 
