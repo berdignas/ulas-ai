@@ -1,4 +1,9 @@
 import { isAIModelConfigured, resolveAIConfig } from "./ai-config";
+import {
+  ASPEK_UMUM,
+  LokasiLayananReferensi,
+  normalisasiAspekUmum,
+} from "./service-taxonomy";
 
 export type Sentimen = "positif" | "negatif" | "netral";
 
@@ -33,12 +38,17 @@ export interface HasilAnalisisUlasan {
   saranDrafBalasan: string;
   kepercayaan: number;
   aspek: AspekHasil[];
+  lokasiLayanan: string[];
 }
 
 export interface InputAnalisisUlasan {
   id: number;
   teksUlasan: string;
   rating: number | null;
+}
+
+export interface AIAnalisisCallbacks {
+  onRetry?: (info: { percobaanBerikutnya: number; maksimumPercobaan: number; jedaMs: number; error: string }) => void | Promise<void>;
 }
 
 export const UNIT_LAYANAN_VALID: readonly UnitLayanan[] = [
@@ -87,10 +97,23 @@ ATURAN EKSTRAKSI:
 
 5. saranDrafBalasan (string): Draf resmi perwakilan humas RS (2-3 kalimat santun & empatik).
 
-6. aspek: Array aspek layanan spesifik yang disebutkan dalam ulasan:
-   - "aspek": frasa singkat huruf kecil (contoh: "keramahan perawat", "kebersihan kamar mandi", "waktu tunggu obat", "kejelasan dokter", "kecepatan pelayanan", "kenyamanan ruang tunggu")
+6. aspek: Pilih maksimal TIGA aspek yang benar-benar disebut dari daftar baku berikut:
+   - "Waktu Tunggu & Kecepatan"
+   - "Sikap & Keramahan Petugas"
+   - "Komunikasi & Kejelasan Informasi"
+   - "Kompetensi & Keamanan Medis"
+   - "Kebersihan & Higiene"
+   - "Fasilitas & Kenyamanan"
+   - "Administrasi, BPJS & Biaya"
+   - "Obat & Pelayanan Farmasi"
+   - "Akses, Keamanan & Parkir"
+   - "Lainnya"
+   - Jangan membuat nama aspek baru.
    - "sentimen": "positif" | "negatif" | "netral"
    - "kutipan": kutipan kalimat asli pendukung ulasan (maksimal 120 karakter)
+
+7. lokasiLayanan: Pilih maksimal TIGA nama poli/ruangan/unit dari DAFTAR LOKASI RS yang diberikan.
+   Gunakan array kosong jika ulasan tidak menyebut lokasi secara jelas. Jangan mengarang nama lokasi.
 
 Balas HANYA dengan JSON valid:
 {
@@ -100,6 +123,7 @@ Balas HANYA dengan JSON valid:
   "faktorUrgensiMedis": boolean,
   "saranDrafBalasan": string,
   "kepercayaan": number,
+  "lokasiLayanan": string[],
   "aspek": [
     { "aspek": string, "sentimen": "positif"|"negatif"|"netral", "kutipan": string }
   ]
@@ -111,7 +135,109 @@ MODE BATCH (aturan ini menggantikan format jawaban tunggal di atas):
 - Input berisi array "ulasan". Analisis SETIAP item secara independen.
 - Salin "id" input ke hasil yang sesuai. Jangan menghilangkan, menggabungkan, atau menambah item.
 - Balas hanya dengan JSON valid berbentuk:
-{"hasil":[{"id":number,"unitLayanan":string,"kategoriMasalah":string,"sentimen":string,"faktorUrgensiMedis":boolean,"saranDrafBalasan":string,"kepercayaan":number,"aspek":[{"aspek":string,"sentimen":string,"kutipan":string}]}]}`;
+{"hasil":[{"id":number,"unitLayanan":string,"kategoriMasalah":string,"sentimen":string,"faktorUrgensiMedis":boolean,"saranDrafBalasan":string,"kepercayaan":number,"lokasiLayanan":string[],"aspek":[{"aspek":string,"sentimen":string,"kutipan":string}]}]}`;
+
+const ASPEK_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    aspek: { type: "string", enum: ASPEK_UMUM },
+    sentimen: { type: "string", enum: ["positif", "negatif", "netral"] },
+    kutipan: { type: "string", maxLength: 120 },
+  },
+  required: ["aspek", "sentimen", "kutipan"],
+} as const;
+
+const HASIL_JSON_PROPERTIES = {
+  unitLayanan: { type: "string", enum: UNIT_LAYANAN_VALID },
+  kategoriMasalah: { type: "string", enum: KATEGORI_MASALAH_VALID },
+  sentimen: { type: "string", enum: ["positif", "negatif", "netral"] },
+  faktorUrgensiMedis: { type: "boolean" },
+  saranDrafBalasan: { type: "string", maxLength: 500 },
+  kepercayaan: { type: "number", minimum: 0, maximum: 1 },
+  aspek: {
+    type: "array",
+    maxItems: 3,
+    items: ASPEK_JSON_SCHEMA,
+  },
+} as const;
+
+const HASIL_JSON_REQUIRED = [
+  "unitLayanan",
+  "kategoriMasalah",
+  "sentimen",
+  "faktorUrgensiMedis",
+  "saranDrafBalasan",
+  "kepercayaan",
+  "aspek",
+] as const;
+
+function lokasiJsonSchema(lokasi: LokasiLayananReferensi[]) {
+  const namaLokasi = lokasi.filter((item) => item.aktif !== false).map((item) => item.nama);
+  return {
+    type: "array",
+    maxItems: Math.min(3, namaLokasi.length),
+    items: namaLokasi.length > 0
+      ? { type: "string", enum: namaLokasi }
+      : { type: "string" },
+  };
+}
+
+function propertiHasil(lokasi: LokasiLayananReferensi[]) {
+  return {
+    ...HASIL_JSON_PROPERTIES,
+    lokasiLayanan: lokasiJsonSchema(lokasi),
+  };
+}
+
+function singleResponseSchema(lokasi: LokasiLayananReferensi[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: propertiHasil(lokasi),
+    required: [...HASIL_JSON_REQUIRED, "lokasiLayanan"],
+  };
+}
+
+function batchResponseSchema(items: InputAnalisisUlasan[], lokasi: LokasiLayananReferensi[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      hasil: {
+        type: "array",
+        minItems: items.length,
+        maxItems: items.length,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "integer", enum: items.map((item) => item.id) },
+            ...propertiHasil(lokasi),
+          },
+          required: ["id", ...HASIL_JSON_REQUIRED, "lokasiLayanan"],
+        },
+      },
+    },
+    required: ["hasil"],
+  };
+}
+
+function promptDenganLokasi(lokasi: LokasiLayananReferensi[]): string {
+  if (lokasi.length === 0) return `${SYSTEM_PROMPT}\n\nDAFTAR LOKASI RS: belum dikonfigurasi.`;
+  const daftar = lokasi
+    .filter((item) => item.aktif !== false)
+    .slice(0, 200)
+    .map((item) => `- ${item.nama} [${item.jenis}]${item.kataKunci.length ? `; alias: ${item.kataKunci.slice(0, 5).join(", ")}` : ""}`)
+    .join("\n");
+  return `${SYSTEM_PROMPT}\n\nDAFTAR LOKASI RS (gunakan nama persis):\n${daftar}`;
+}
+
+function geminiThinkingConfig(model: string) {
+  return {
+    thinkingLevel: model.includes("flash-lite") ? "minimal" : "low",
+  };
+}
 
 export function getEnv() {
   return {
@@ -144,7 +270,8 @@ const BACKOFF_429_MS = [30_000, 60_000, 120_000, 240_000, 300_000];
 export async function analisisUlasanDenganAI(
   teksUlasan: string,
   rating: number | null,
-  preferredModel?: string | null
+  preferredModel?: string | null,
+  lokasi: LokasiLayananReferensi[] = []
 ): Promise<HasilAnalisisUlasan> {
   if (!teksUlasan || teksUlasan.trim() === "") {
     const sentimen = sentimenFallbackDariRating(rating) ?? "netral";
@@ -156,27 +283,32 @@ export async function analisisUlasanDenganAI(
       saranDrafBalasan: "Terima kasih atas penilaian yang Anda berikan kepada rumah sakit kami.",
       kepercayaan: 1,
       aspek: [],
+      lokasiLayanan: [],
     };
   }
 
   const config = resolveAIConfig(preferredModel);
   if (!config.apiKey) {
-    throw new Error(`API key ${config.providerLabel} belum dikonfigurasi di Vercel`);
+    throw new Error(`API key ${config.providerLabel} belum dikonfigurasi di environment server`);
   }
 
   if (config.provider === "gemini") {
     let lastError: unknown = null;
-    for (let jumlahPercobaan = 0; jumlahPercobaan < 2; jumlahPercobaan++) {
+    const maksimumPercobaan = 4;
+    for (let jumlahPercobaan = 0; jumlahPercobaan < maksimumPercobaan; jumlahPercobaan++) {
       try {
-        return await callOnceGemini(teksUlasan, rating, 45_000, config.model);
+        return await callOnceGemini(teksUlasan, rating, 45_000, config.model, lokasi);
       } catch (error) {
         lastError = error;
         const retryable =
           error instanceof RetryableError ||
           error instanceof TypeError ||
           (error instanceof Error && error.name === "AbortError");
-        if (!retryable || jumlahPercobaan === 1) break;
-        await new Promise((r) => setTimeout(r, 1500));
+        if (!retryable || jumlahPercobaan === maksimumPercobaan - 1) break;
+        const backoff = [5_000, 15_000, 45_000][jumlahPercobaan] ?? 45_000;
+        const retryAfter = error instanceof RetryableError ? error.retryAfterMs : undefined;
+        const jeda = Math.min(120_000, Math.max(backoff, retryAfter ?? 0) + Math.floor(Math.random() * 1_000));
+        await new Promise((r) => setTimeout(r, jeda));
       }
     }
     throw lastError instanceof Error ? lastError : new Error("Pemanggilan Gemini AI gagal");
@@ -254,39 +386,59 @@ export async function analisisUlasanDenganAI(
  */
 export async function analisisBatchUlasanDenganAI(
   items: InputAnalisisUlasan[],
-  preferredModel?: string | null
+  preferredModel?: string | null,
+  lokasi: LokasiLayananReferensi[] = [],
+  callbacks: AIAnalisisCallbacks = {}
 ): Promise<Map<number, HasilAnalisisUlasan>> {
   const hasil = new Map<number, HasilAnalisisUlasan>();
   if (items.length === 0) return hasil;
 
   const config = resolveAIConfig(preferredModel);
-  if (items.length === 1 || config.provider !== "gemini") {
+  if (config.provider !== "gemini") {
     const entries = await Promise.all(
       items.map(async (item) => [
         item.id,
-        await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel),
+        await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi),
       ] as const)
     );
     return new Map(entries);
   }
 
   let lastError: unknown = null;
-  for (let jumlahPercobaan = 0; jumlahPercobaan < 2; jumlahPercobaan++) {
+  const maksimumPercobaan = 5;
+  for (let jumlahPercobaan = 0; jumlahPercobaan < maksimumPercobaan; jumlahPercobaan++) {
     try {
-      return await callOnceGeminiBatch(items, 60_000, config.model);
+      return await callOnceGeminiBatch(items, 60_000, config.model, lokasi);
     } catch (error) {
       lastError = error;
-      if (!(error instanceof RetryableError) && !(error instanceof TypeError)) break;
-      if (jumlahPercobaan === 1) break;
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const retryable = error instanceof RetryableError || error instanceof TypeError ||
+        (error instanceof Error && error.name === "AbortError");
+      if (!retryable || jumlahPercobaan === maksimumPercobaan - 1) break;
+      const backoff = [5_000, 15_000, 30_000, 60_000][jumlahPercobaan] ?? 60_000;
+      const retryAfter = error instanceof RetryableError ? error.retryAfterMs : undefined;
+      const jitter = Math.floor(Math.random() * 1_000);
+      const jeda = Math.min(120_000, Math.max(backoff, retryAfter ?? 0) + jitter);
+      console.warn(`[ai] Gemini batch ditunda ${jeda}ms sebelum percobaan ${jumlahPercobaan + 2}/${maksimumPercobaan}`);
+      await callbacks.onRetry?.({
+        percobaanBerikutnya: jumlahPercobaan + 2,
+        maksimumPercobaan,
+        jedaMs: jeda,
+        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      });
+      await new Promise((resolve) => setTimeout(resolve, jeda));
     }
+  }
+
+  if (lastError instanceof RetryableError || lastError instanceof TypeError ||
+      (lastError instanceof Error && lastError.name === "AbortError")) {
+    throw lastError;
   }
 
   console.warn("[ai] Gemini batch gagal, mencoba per ulasan:", lastError);
   const entries = await Promise.all(
     items.map(async (item) => [
       item.id,
-      await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel),
+      await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi),
     ] as const)
   );
   return new Map(entries);
@@ -343,7 +495,7 @@ function cocokanBoolean(raw: unknown): boolean {
   return false;
 }
 
-function normalizeHasil(raw: unknown): HasilAnalisisUlasan {
+function normalizeHasil(raw: unknown, lokasi: LokasiLayananReferensi[] = []): HasilAnalisisUlasan {
   if (typeof raw !== "object" || raw === null) throw new Error("Format respons AI tidak valid");
   const obj = raw as Record<string, unknown>;
 
@@ -361,15 +513,29 @@ function normalizeHasil(raw: unknown): HasilAnalisisUlasan {
   for (const item of aspekRaw) {
     if (typeof item !== "object" || item === null) continue;
     const a = item as Record<string, unknown>;
-    const nama = String(a.aspek ?? a.aspect ?? a.nama ?? "").trim().toLowerCase();
+    const namaMentah = String(a.aspek ?? a.aspect ?? a.nama ?? "").trim();
     const sentimenAspek = cocokanSentimen(String(a.sentimen ?? a.sentiment ?? ""));
-    if (!nama || !sentimenAspek) continue;
+    if (!namaMentah || !sentimenAspek) continue;
+    const nama = normalisasiAspekUmum(namaMentah);
+    if (aspek.some((itemAspek) => itemAspek.aspek === nama)) continue;
     aspek.push({
-      aspek: nama.slice(0, 80),
+      aspek: nama,
       sentimen: sentimenAspek,
       kutipan: typeof a.kutipan === "string" && a.kutipan.trim() ? a.kutipan.trim().slice(0, 160) : null,
     });
   }
+
+  const namaLokasi = new Map(lokasi.map((item) => [item.nama.toLowerCase(), item.nama]));
+  const lokasiRaw = Array.isArray(obj.lokasiLayanan)
+    ? obj.lokasiLayanan
+    : Array.isArray(obj.lokasi_layanan)
+      ? obj.lokasi_layanan
+      : [];
+  const lokasiLayanan = Array.from(new Set(
+    lokasiRaw
+      .map((item) => namaLokasi.get(String(item).trim().toLowerCase()))
+      .filter((item): item is string => Boolean(item))
+  )).slice(0, 3);
 
   return {
     sentimen,
@@ -378,7 +544,8 @@ function normalizeHasil(raw: unknown): HasilAnalisisUlasan {
     faktorUrgensiMedis,
     saranDrafBalasan,
     kepercayaan,
-    aspek: aspek.slice(0, 10),
+    aspek: aspek.slice(0, 3),
+    lokasiLayanan,
   };
 }
 
@@ -444,6 +611,21 @@ class RetryableError extends Error {
   ) {
     super(message);
   }
+}
+
+export function isAIErrorRetryable(error: unknown): boolean {
+  return error instanceof RetryableError || error instanceof TypeError ||
+    (error instanceof Error && error.name === "AbortError");
+}
+
+export function getAIErrorInfo(error: unknown): { code: string; message: string; retryable: boolean } {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = error instanceof RetryableError ? error.status : undefined;
+  return {
+    code: status ? `HTTP_${status}` : error instanceof Error ? error.name || "AI_ERROR" : "AI_ERROR",
+    message: message.replace(/key=[^&\s]+/gi, "key=[REDACTED]").slice(0, 500),
+    retryable: isAIErrorRetryable(error),
+  };
 }
 
 
@@ -617,7 +799,10 @@ async function tungguGiliranNVIDIA(): Promise<void> {
   lepaskan();
 }
 
-const MIN_REQUEST_GAP_MS_GEMINI = 2000;
+const MIN_REQUEST_GAP_MS_GEMINI = Math.max(
+  0,
+  Math.min(10_000, Number(process.env.GEMINI_REQUEST_GAP_MS) || 500)
+);
 let waktuPermintaanTerakhirGemini = 0;
 let antreanPermintaanGemini: Promise<void> = Promise.resolve();
 
@@ -643,7 +828,8 @@ async function callOnceGemini(
   teksUlasan: string,
   rating: number | null,
   timeoutMs: number,
-  overrideModel?: string
+  overrideModel?: string,
+  lokasi: LokasiLayananReferensi[] = []
 ): Promise<HasilAnalisisUlasan> {
   const { apiKey, model: defaultModel } = getEnvGemini();
   const model = overrideModel || defaultModel;
@@ -660,11 +846,12 @@ async function callOnceGemini(
       },
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT }],
+          parts: [{ text: promptDenganLokasi(lokasi) }],
         },
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0,
+          responseJsonSchema: singleResponseSchema(lokasi),
+          thinkingConfig: geminiThinkingConfig(model),
         },
         contents: [
           {
@@ -695,7 +882,7 @@ async function callOnceGemini(
 
     const data = await res.json();
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    return normalizeHasil(extractJson(content));
+    return normalizeHasil(extractJson(content), lokasi);
   } finally {
     clearTimeout(timer);
   }
@@ -704,7 +891,8 @@ async function callOnceGemini(
 async function callOnceGeminiBatch(
   items: InputAnalisisUlasan[],
   timeoutMs: number,
-  model: string
+  model: string,
+  lokasi: LokasiLayananReferensi[] = []
 ): Promise<Map<number, HasilAnalisisUlasan>> {
   const { apiKey } = getEnvGemini();
   await tungguGiliranGemini();
@@ -717,10 +905,11 @@ async function callOnceGeminiBatch(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: BATCH_SYSTEM_PROMPT }] },
+        systemInstruction: { parts: [{ text: `${promptDenganLokasi(lokasi)}\n\n${BATCH_SYSTEM_PROMPT.slice(SYSTEM_PROMPT.length)}` }] },
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0,
+          responseJsonSchema: batchResponseSchema(items, lokasi),
+          thinkingConfig: geminiThinkingConfig(model),
         },
         contents: [{
           parts: [{
@@ -768,7 +957,7 @@ async function callOnceGeminiBatch(
       if (typeof row !== "object" || row === null) continue;
       const id = Number((row as Record<string, unknown>).id);
       if (!items.some((item) => item.id === id) || output.has(id)) continue;
-      output.set(id, normalizeHasil(row));
+      output.set(id, normalizeHasil(row, lokasi));
     }
 
     if (output.size !== items.length) {

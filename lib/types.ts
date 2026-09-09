@@ -34,6 +34,28 @@ export interface StatistikAspek {
   netral: number;
 }
 
+export interface StatistikLokasi {
+  id: number;
+  nama: string;
+  jenis: "poli" | "ruangan" | "unit" | "fasilitas";
+  total: number;
+  positif: number;
+  negatif: number;
+  netral: number;
+  contoh: string[];
+}
+
+export interface UlasanLokasiItem {
+  id: number;
+  namaPengulas: string | null;
+  rating: number | null;
+  teksUlasan: string;
+  tanggalUlasan: string | null;
+  sentimen: Sentimen | null;
+  sumberLabel: string | null;
+  metode: "keyword" | "ai";
+}
+
 export interface ParsedPreview {
   namaPengulas: string | null;
   rating: number | null;

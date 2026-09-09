@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { supabase, toCamel } from "@/lib/db";
 import { analisis, AnalisisRow } from "@/lib/db/schema";
-import { prosesSedangBerjalan } from "@/lib/analyzer";
+import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
 
@@ -18,11 +18,24 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
+  // Jika instance worker berakhir sebelum semua batch selesai, polling berikutnya
+  // memulai kembali dari checkpoint di database. Ulasan dengan sumber_label=ai
+  // tidak diproses ulang, sehingga aman dijalankan di localhost maupun serverless.
+  let berjalanDiWorker = prosesSedangBerjalan(analisisId);
+  if (item.status === "berjalan" && !berjalanDiWorker) {
+    const proses = mulaiProsesAnalisis(analisisId);
+    if (proses) {
+      after(() => proses);
+      berjalanDiWorker = true;
+      console.info(`[ai] melanjutkan analisis ${analisisId} dari checkpoint database`);
+    }
+  }
+
   return NextResponse.json({
     status: item.status,
     totalUlasan: item.totalUlasan,
     ulasanDiproses:
-      prosesSedangBerjalan(analisisId) || item.status === "berjalan" || item.status === "berhenti"
+      berjalanDiWorker || item.status === "berjalan" || item.status === "berhenti"
         ? item.ulasanDiproses
         : item.totalUlasan,
     catatan: item.catatan,

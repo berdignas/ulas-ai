@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
-import { rumahSakit, ulasan, sinkronLog, RumahSakitRow } from "@/lib/db/schema";
+import { rumahSakit, ulasan, sinkronLog, lokasiLayananRs, RumahSakitRow } from "@/lib/db/schema";
 import { getAIModelOptions } from "@/lib/ai-config";
+import { LOKASI_DEFAULT } from "@/lib/service-taxonomy";
 
 export const runtime = "nodejs";
 
@@ -68,6 +69,17 @@ export async function POST(req: Request) {
     if (error || !created?.[0]) {
       return NextResponse.json({ error: "Gagal membuat: " + (error?.message || "Unknown error") }, { status: 500 });
     }
+
+    await supabase.from(lokasiLayananRs).insert(
+      LOKASI_DEFAULT.map((item) => ({
+        rumah_sakit_id: created[0].id,
+        nama: item.nama,
+        jenis: item.jenis,
+        kata_kunci: item.kataKunci,
+        aktif: true,
+        urutan: item.urutan,
+      }))
+    );
 
     return NextResponse.json({ id: created[0].id });
   } catch (e) {

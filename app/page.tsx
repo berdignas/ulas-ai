@@ -19,7 +19,6 @@ import {
   SpinnerGap,
   StopCircle,
   Tag,
-  Trash,
   UploadSimple,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -50,7 +49,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { formatTanggal, formatTanggalWaktu, type AnalisisItem } from "@/lib/types";
+import { formatTanggal, type AnalisisItem } from "@/lib/types";
+
+type TrendPoint = {
+  tanggal: string;
+  label: string;
+  total: number;
+  persenPositif: number;
+  persenNegatif: number;
+  persenNetral: number;
+};
 
 export default function DashboardPage() {
   const [daftar, setDaftar] = useState<AnalisisItem[]>([]);
@@ -65,6 +73,7 @@ export default function DashboardPage() {
   const [rumahSakitId, setRumahSakitId] = useState<number | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   const [pesanSukses, setPesanSukses] = useState<string | null>(null);
+  const [trendPoints, setTrendPoints] = useState<TrendPoint[]>([]);
 
   const muatDaftar = useCallback(() => {
     return fetch("/api/analisis")
@@ -119,6 +128,24 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [statusAktif, muatDaftar]);
 
+  useEffect(() => {
+    if (dipilih === null) {
+      return;
+    }
+    let aktif = true;
+    fetch(`/api/analisis/${dipilih}/tren`)
+      .then((res) => res.json())
+      .then((data: { points?: TrendPoint[] }) => {
+        if (aktif) setTrendPoints(Array.isArray(data.points) ? data.points : []);
+      })
+      .catch(() => {
+        if (aktif) setTrendPoints([]);
+      });
+    return () => {
+      aktif = false;
+    };
+  }, [dipilih, statusAktif]);
+
   const prosesUlangDenganAI = useCallback(async () => {
     if (dipilih === null || prosesUlangJalan) return;
     setProsesUlangJalan(true);
@@ -164,11 +191,6 @@ export default function DashboardPage() {
     const timer = setTimeout(() => setKonfirmasi(null), 4000);
     return () => clearTimeout(timer);
   }, [konfirmasi]);
-
-  const pilihSetelahHapus = useCallback((sisa: AnalisisItem[]) => {
-    const selesai = sisa.find((a) => a.status === "selesai");
-    setDipilih(selesai?.id ?? sisa[0]?.id ?? null);
-  }, []);
 
   const handleSync = async (periode: "1d" | "1w" | "1m" | "1y") => {
     if (!rumahSakitId) return;
@@ -237,16 +259,13 @@ export default function DashboardPage() {
   );
 
   const dataGrafik = useMemo(
-    () =>
-      selesaiUrutWaktu.map((a) => {
-        const terlabel = a.totalPositif + a.totalNegatif + a.totalNetral;
-        return {
-          tanggal: formatTanggal(a.tanggalUnggah),
-          Positif: terlabel ? Math.round((a.totalPositif / terlabel) * 100) : 0,
-          Negatif: terlabel ? Math.round((a.totalNegatif / terlabel) * 100) : 0,
-        };
-      }),
-    [selesaiUrutWaktu]
+    () => trendPoints.map((point) => ({
+      ...point,
+      Positif: point.total > 0 ? point.persenPositif : null,
+      Negatif: point.total > 0 ? point.persenNegatif : null,
+      Netral: point.total > 0 ? point.persenNetral : null,
+    })),
+    [trendPoints]
   );
 
   const itemA = useMemo(() => daftar.find((a) => a.id === periodeA), [daftar, periodeA]);
@@ -579,7 +598,7 @@ export default function DashboardPage() {
             <div className="px-6">
               <h3 className="text-sm font-semibold leading-none tracking-tight">Grafik Tren Sentimen</h3>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Persentase sentimen positif dan negatif dari setiap periode analisis.
+                Persentase sentimen harian berdasarkan tanggal asli setiap review.
               </p>
             </div>
             <div className="mt-6 px-6">
@@ -592,12 +611,13 @@ export default function DashboardPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={dataGrafik}>
                       <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.92 0.004 286.32)" />
-                      <XAxis dataKey="tanggal" fontSize={11} tickLine={false} axisLine={false} />
+                      <XAxis dataKey="label" fontSize={11} tickLine={false} axisLine={false} minTickGap={24} />
                       <YAxis fontSize={11} tickLine={false} axisLine={false} unit="%" domain={[0, 100]} />
                       <Tooltip formatter={(value) => `${value}%`} contentStyle={{ borderRadius: 12, fontSize: 11, border: "1px solid oklch(0.92 0.004 286.32)" }} />
                       <Legend />
                       <Line type="monotone" dataKey="Positif" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
                       <Line type="monotone" dataKey="Negatif" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="Netral" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 4" dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>

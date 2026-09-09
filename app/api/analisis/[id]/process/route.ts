@@ -1,5 +1,5 @@
 import { after, NextResponse } from "next/server";
-import { supabase, toCamel } from "@/lib/db";
+import { supabase, toCamel, toSnake } from "@/lib/db";
 import { analisis, rumahSakit, AnalisisRow } from "@/lib/db/schema";
 import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 import { aiConfigured } from "@/lib/ai";
@@ -33,17 +33,31 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   }
 
   const ulangi = item.status === "selesai" || item.status === "berhenti";
+  // Catat status sebelum response dikirim. Tanpa ini, polling dapat membaca
+  // status lama ketika worker after() belum sempat mulai di deployment serverless.
+  const { error: startError } = await supabase
+    .from(analisis)
+    .update(toSnake({ status: "berjalan", catatan: null, kondisiUmum: null }))
+    .eq("id", analisisId);
+  if (startError) {
+    return NextResponse.json({ error: `Gagal menandai analisis sebagai berjalan: ${startError.message}` }, { status: 500 });
+  }
+
   const proses = mulaiProsesAnalisis(analisisId);
   if (!proses) {
     return NextResponse.json({ status: "berjalan", pesan: "Analisis sedang diproses." });
   }
-  after(() => proses);
+  if (process.env.VERCEL === "1") {
+    after(() => proses);
+  } else {
+    void proses;
+  }
   return NextResponse.json({
     status: "berjalan",
     pakaiAI,
     model: modelAI,
     pesan: !pakaiAI
-      ? "API key untuk model terpilih belum dikonfigurasi di Vercel; sentimen ditentukan dari rating bintang."
+      ? "API key untuk model terpilih belum dikonfigurasi di environment lokal; sentimen ditentukan dari rating bintang."
       : ulangi
         ? "Analisis diproses ulang. Setiap ulasan sedang dikirim ke AI Gateway."
         : "Analisis dimulai. Setiap ulasan sedang dikirim ke AI Gateway.",

@@ -1,13 +1,32 @@
 import { supabase, toCamel, toSnake } from "./db";
-import { analisis, aspek, hasilAspekUlasan, rumahSakit, ulasan, UlasanRow, AnalisisRow, AspekRow } from "./db/schema";
+import {
+  analisis,
+  aspek,
+  hasilAspekUlasan,
+  hasilLokasiUlasan,
+  lokasiLayananRs,
+  rumahSakit,
+  ulasan,
+  UlasanRow,
+  AnalisisRow,
+  AspekRow,
+  LokasiLayananRsRow,
+} from "./db/schema";
 import {
   aiConfigured,
   analisisBatchUlasanDenganAI,
   HasilAnalisisUlasan,
   buatKondisiUmum,
   kondisiUmumFallback,
+  getAIErrorInfo,
   sentimenFallbackDariRating,
 } from "./ai";
+import {
+  ASPEK_UMUM,
+  deteksiLokasiDariKeyword,
+  LokasiLayananReferensi,
+  normalisasiAspekUmum,
+} from "./service-taxonomy";
 
 const runningProcesses = new Set<number>();
 const stopRequests = new Set<number>();
@@ -21,9 +40,24 @@ export function adaProsesBerjalan(): boolean {
 }
 
 export function hentikanProsesAnalisis(analisisId: number): boolean {
-  if (!runningProcesses.has(analisisId)) return false;
   stopRequests.add(analisisId);
-  return true;
+  return runningProcesses.has(analisisId);
+}
+
+/**
+ * Permintaan berhenti harus disimpan di database, bukan hanya di memori.
+ * Pada deployment serverless, endpoint /stop dan worker dapat berjalan pada
+ * instance yang berbeda sehingga Set di atas tidak selalu dibagikan.
+ */
+async function adaPermintaanBerhenti(analisisId: number): Promise<boolean> {
+  if (stopRequests.has(analisisId)) return true;
+
+  const { data } = await supabase
+    .from(analisis)
+    .select("status")
+    .eq("id", analisisId)
+    .limit(1);
+  return data?.[0]?.status === "berhenti";
 }
 
 export async function hapusAspekYatim(): Promise<void> {
@@ -47,6 +81,26 @@ export function mulaiProsesAnalisis(analisisId: number): Promise<void> | null {
 }
 
 const BATCH_SIZE = Math.max(1, Math.min(15, Number(process.env.ANALYSIS_BATCH_SIZE) || 8));
+const BATCH_MAX_CHARS = Math.max(2_000, Math.min(30_000, Number(process.env.ANALYSIS_BATCH_MAX_CHARS) || 12_000));
+
+function buatBatchAdaptif(items: UlasanRow[]): UlasanRow[][] {
+  const batches: UlasanRow[][] = [];
+  let batch: UlasanRow[] = [];
+  let jumlahKarakter = 0;
+
+  for (const item of items) {
+    const panjang = item.teksUlasan?.length ?? 0;
+    if (batch.length > 0 && (batch.length >= BATCH_SIZE || jumlahKarakter + panjang > BATCH_MAX_CHARS)) {
+      batches.push(batch);
+      batch = [];
+      jumlahKarakter = 0;
+    }
+    batch.push(item);
+    jumlahKarakter += panjang;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
 
 async function prosesAnalisis(analisisId: number): Promise<void> {
   try {
@@ -62,6 +116,16 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
       : { data: null };
     const modelAI = konfigurasiRSRaw?.[0]?.ai_model ?? null;
     const aiTersedia = aiConfigured(modelAI);
+    const lokasiResponse = rumahSakitId
+      ? await supabase
+          .from(lokasiLayananRs)
+          .select("*")
+          .eq("rumah_sakit_id", rumahSakitId)
+          .eq("aktif", true)
+          .order("urutan", { ascending: true })
+      : { data: null, error: null };
+    const schemaV3Tersedia = !lokasiResponse.error;
+    const daftarLokasi = toCamel<LokasiLayananRsRow[]>(lokasiResponse.data ?? []);
 
     const belumDiproses = daftarUlasan.filter((u) => u.sumberLabel !== "ai");
     const sudahDiproses = daftarUlasan.filter((u) => u.sumberLabel === "ai");
@@ -69,8 +133,20 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     const idBelum = belumDiproses.map((u) => u.id);
     if (idBelum.length > 0) {
       await supabase.from(hasilAspekUlasan).delete().in("ulasan_id", idBelum);
+      if (schemaV3Tersedia) {
+        await supabase.from(hasilLokasiUlasan).delete().in("ulasan_id", idBelum);
+      }
+      const resetAI = schemaV3Tersedia ? {
+        aiStatus: aiTersedia ? "menunggu" : "tidak_aktif",
+        aiErrorCode: null,
+        aiErrorMessage: null,
+      } : {};
       await supabase.from(ulasan)
-        .update(toSnake({ sentimen: null, sumberLabel: null }))
+        .update(toSnake({
+          sentimen: null,
+          sumberLabel: null,
+          ...resetAI,
+        }))
         .in("id", idBelum);
     }
 
@@ -82,15 +158,21 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     let gagalDilabel = 0;
     let gagalAI = 0;
     let pakaiAI = sudahDiproses.length > 0;
+    let tertundaKarenaAI: ReturnType<typeof getAIErrorInfo> | null = null;
+    let errorAITerakhir: ReturnType<typeof getAIErrorInfo> | null = null;
     const cacheAspek = new Map<string, number>();
     const { data: daftarAspekRaw } = await supabase.from(aspek).select("*");
     for (const itemAspek of toCamel<AspekRow[]>(daftarAspekRaw ?? [])) {
-      cacheAspek.set(itemAspek.namaAspek.trim().toLowerCase(), itemAspek.id);
+      const namaNormal = normalisasiAspekUmum(itemAspek.namaAspek);
+      if (namaNormal.toLowerCase() === itemAspek.namaAspek.trim().toLowerCase()) {
+        cacheAspek.set(namaNormal.toLowerCase(), itemAspek.id);
+      }
     }
 
     const simpanSatuUlasan = async (
       item: UlasanRow,
-      hasil: HasilAnalisisUlasan | null
+      hasil: HasilAnalisisUlasan | null,
+      errorAI: ReturnType<typeof getAIErrorInfo> | null
     ) => {
       let sentimen: string | null = null;
       let sumberLabel: string | null = null;
@@ -113,6 +195,13 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
         if (!sentimen) gagalDilabel++;
       }
 
+      const observabilitasAI = schemaV3Tersedia ? {
+        aiStatus: hasil ? "selesai" : aiTersedia ? "gagal" : "tidak_aktif",
+        aiAttempts: (item.aiAttempts ?? 0) + (aiTersedia ? 1 : 0),
+        aiErrorCode: hasil ? null : errorAI?.code ?? null,
+        aiErrorMessage: hasil ? null : errorAI?.message ?? null,
+        aiDiprosesPada: hasil ? new Date().toISOString() : null,
+      } : {};
       return supabase.from(ulasan)
         .update(toSnake({
           sentimen,
@@ -121,25 +210,56 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
           kategoriMasalah,
           faktorUrgensiMedis,
           saranDrafBalasan,
+          ...observabilitasAI,
           diperbaruiPada: new Date().toISOString(),
         }))
         .eq("id", item.id);
     };
 
-    for (let cursor = 0; cursor < belumDiproses.length; cursor += BATCH_SIZE) {
-      if (stopRequests.has(analisisId)) break;
-      const batch = belumDiproses.slice(cursor, cursor + BATCH_SIZE);
+    const batches = buatBatchAdaptif(belumDiproses);
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      if (await adaPermintaanBerhenti(analisisId)) break;
+      const batch = batches[batchIndex];
       let hasilBatch = new Map<number, HasilAnalisisUlasan>();
+      let errorPermanenBatch: ReturnType<typeof getAIErrorInfo> | null = null;
+      const mulaiBatch = Date.now();
 
       if (aiTersedia) {
         try {
           hasilBatch = await analisisBatchUlasanDenganAI(
             batch.map((item) => ({ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null })),
-            modelAI
+            modelAI,
+            daftarLokasi,
+            {
+              onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs }) => {
+                await supabase.from(analisis)
+                  .update(toSnake({
+                    catatan: `Gemini sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
+                  }))
+                  .eq("id", analisisId);
+              },
+            }
           );
         } catch (errorAI) {
+          const info = getAIErrorInfo(errorAI);
+          errorAITerakhir = info;
+          console.warn(`[ai] batch ${batchIndex + 1}/${batches.length} gagal (${info.code}): ${info.message}`);
+          if (info.retryable) {
+            tertundaKarenaAI = info;
+            if (schemaV3Tersedia) {
+              await Promise.all(batch.map((item) => supabase.from(ulasan)
+                .update(toSnake({
+                  aiStatus: "retry",
+                  aiAttempts: (item.aiAttempts ?? 0) + 1,
+                  aiErrorCode: info.code,
+                  aiErrorMessage: info.message,
+                }))
+                .eq("id", item.id)));
+            }
+            break;
+          }
           gagalAI += batch.length;
-          console.warn(`[ai] batch ${cursor / BATCH_SIZE + 1} gagal: ${errorAI instanceof Error ? errorAI.message : String(errorAI)}`);
+          errorPermanenBatch = info;
         }
       }
 
@@ -149,6 +269,13 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
         sentimenAspek: string;
         kutipan: string | null;
       }> = [];
+      const relasiLokasi: Array<{
+        ulasanId: number;
+        lokasiLayananId: number;
+        metode: "keyword" | "ai";
+        kutipan: string | null;
+      }> = [];
+      const lokasiByNama = new Map(daftarLokasi.map((item) => [item.nama.toLowerCase(), item]));
 
       await pastikanAspekTersedia(
         Array.from(hasilBatch.values()).flatMap((hasil) => hasil.aspek.map((item) => item.aspek)),
@@ -169,20 +296,58 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
             });
           }
         }
+
+        const dariKeyword = deteksiLokasiDariKeyword(item.teksUlasan, daftarLokasi);
+        const lokasiGabungan = new Map<number, { lokasi: LokasiLayananReferensi; metode: "keyword" | "ai" }>();
+        for (const lokasi of dariKeyword) lokasiGabungan.set(lokasi.id, { lokasi, metode: "keyword" });
+        for (const nama of hasil?.lokasiLayanan ?? []) {
+          const lokasi = lokasiByNama.get(nama.toLowerCase());
+          if (lokasi && !lokasiGabungan.has(lokasi.id)) lokasiGabungan.set(lokasi.id, { lokasi, metode: "ai" });
+        }
+        for (const { lokasi, metode } of Array.from(lokasiGabungan.values()).slice(0, 3)) {
+          relasiLokasi.push({
+            ulasanId: item.id,
+            lokasiLayananId: lokasi.id,
+            metode,
+            kutipan: item.teksUlasan.slice(0, 240) || null,
+          });
+        }
       }
 
-      await Promise.all(batch.map((item) => simpanSatuUlasan(item, hasilBatch.get(item.id) ?? null)));
+      await Promise.all(batch.map((item) => simpanSatuUlasan(
+        item,
+        hasilBatch.get(item.id) ?? null,
+        errorPermanenBatch
+      )));
       if (relasiAspek.length > 0) {
         await supabase.from(hasilAspekUlasan).insert(toSnake(relasiAspek));
+      }
+      if (schemaV3Tersedia && relasiLokasi.length > 0) {
+        await supabase.from(hasilLokasiUlasan).upsert(toSnake(relasiLokasi), {
+          onConflict: "ulasan_id,lokasi_layanan_id",
+        });
       }
 
       ulasanDiprosesCounter += batch.length;
       await supabase.from(analisis)
-        .update(toSnake({ ulasanDiproses: ulasanDiprosesCounter }))
+        .update(toSnake({ ulasanDiproses: ulasanDiprosesCounter, catatan: null }))
         .eq("id", analisisId);
+      console.info(
+        `[ai] analisis ${analisisId}, batch ${batchIndex + 1}/${batches.length}: ${batch.length} ulasan dalam ${Date.now() - mulaiBatch}ms`
+      );
     }
 
-    if (stopRequests.has(analisisId)) {
+    if (tertundaKarenaAI) {
+      await supabase.from(analisis)
+        .update(toSnake({
+          status: "berhenti",
+          catatan: `Analisis AI dijeda agar hasil tidak diganti dengan rating. ${tertundaKarenaAI.code}: ${tertundaKarenaAI.message}. Klik Proses ulang setelah batas Gemini pulih; hasil AI yang sudah selesai tidak akan diulang.`,
+        }))
+        .eq("id", analisisId);
+      return;
+    }
+
+    if (await adaPermintaanBerhenti(analisisId)) {
       const { data: terkiniRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
       const terkini = toCamel<AnalisisRow>(terkiniRaw?.[0]);
       await supabase.from(analisis)
@@ -241,10 +406,10 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
 
     const catatan: string[] = [];
     if (!aiTersedia) {
-      catatan.push(`API key untuk model ${modelAI || "AI terpilih"} belum diatur di Vercel; sentimen ditentukan dari rating bintang sebagai fallback.`);
+      catatan.push(`API key untuk model ${modelAI || "AI terpilih"} belum diatur di environment lokal; sentimen ditentukan dari rating bintang sebagai fallback.`);
     }
     if (gagalAI > 0) {
-      catatan.push(`${gagalAI} ulasan gagal diproses AI dan diberi label dari rating bintang sebagai fallback.`);
+      catatan.push(`${gagalAI} ulasan gagal diproses AI dan diberi label dari rating bintang sebagai fallback.${errorAITerakhir ? ` Penyebab terakhir: ${errorAITerakhir.code} — ${errorAITerakhir.message}.` : ""}`);
     }
     if (gagalDilabel > 0) {
       catatan.push(`${gagalDilabel} ulasan tidak dapat diberi label sentimen (tidak ada rating dan AI gagal).`);
@@ -352,7 +517,7 @@ export async function dapatkanStatistikAspek(
 
   const { data: hasilRaw } = await query;
 
-  const mapStats = new Map<number, StatistikAspek>();
+  const mapStats = new Map<string, StatistikAspek>();
 
   if (hasilRaw) {
     const hasilTerstruktur = hasilRaw as unknown as Array<{
@@ -362,20 +527,87 @@ export async function dapatkanStatistikAspek(
     for (const item of hasilTerstruktur) {
       const asp = item.aspek;
       if (!asp) continue;
-      const id = asp.id;
-      const namaAspek = asp.nama_aspek;
+      const namaAspek = normalisasiAspekUmum(asp.nama_aspek);
+      const id = ASPEK_UMUM.indexOf(namaAspek) + 1;
       const sentimen = item.sentimen_aspek;
 
-      if (!mapStats.has(id)) {
-        mapStats.set(id, { id, namaAspek, positif: 0, negatif: 0, netral: 0 });
+      if (!mapStats.has(namaAspek)) {
+        mapStats.set(namaAspek, { id, namaAspek, positif: 0, negatif: 0, netral: 0 });
       }
 
-      const st = mapStats.get(id)!;
+      const st = mapStats.get(namaAspek)!;
       if (sentimen === "positif") st.positif++;
       else if (sentimen === "negatif") st.negatif++;
       else if (sentimen === "netral") st.netral++;
     }
   }
 
-  return Array.from(mapStats.values());
+  return Array.from(mapStats.values()).sort((a, b) => a.id - b.id);
+}
+
+export interface StatistikLokasi {
+  id: number;
+  nama: string;
+  jenis: string;
+  total: number;
+  positif: number;
+  negatif: number;
+  netral: number;
+  contoh: string[];
+}
+
+export async function dapatkanStatistikLokasi(
+  analisisId: number,
+  dari?: string | null,
+  sampai?: string | null
+): Promise<StatistikLokasi[]> {
+  let query = supabase.from(hasilLokasiUlasan)
+    .select("kutipan, lokasi_layanan_rs(id,nama,jenis), ulasan!inner(analisis_id,tanggal_ulasan,sentimen)")
+    .eq("ulasan.analisis_id", analisisId);
+
+  if (dari) {
+    const tglDari = new Date(dari);
+    tglDari.setHours(0, 0, 0, 0);
+    query = query.gte("ulasan.tanggal_ulasan", tglDari.toISOString());
+  }
+  if (sampai) {
+    const tglSampai = new Date(sampai);
+    tglSampai.setHours(23, 59, 59, 999);
+    query = query.lte("ulasan.tanggal_ulasan", tglSampai.toISOString());
+  }
+
+  const { data } = await query;
+  const statistik = new Map<number, StatistikLokasi>();
+  const rows = (data ?? []) as unknown as Array<{
+    kutipan: string | null;
+    lokasi_layanan_rs: { id: number; nama: string; jenis: string } | null;
+    ulasan: { sentimen: string | null } | null;
+  }>;
+
+  for (const row of rows) {
+    const lokasi = row.lokasi_layanan_rs;
+    if (!lokasi) continue;
+    if (!statistik.has(lokasi.id)) {
+      statistik.set(lokasi.id, {
+        id: lokasi.id,
+        nama: lokasi.nama,
+        jenis: lokasi.jenis,
+        total: 0,
+        positif: 0,
+        negatif: 0,
+        netral: 0,
+        contoh: [],
+      });
+    }
+    const item = statistik.get(lokasi.id)!;
+    item.total++;
+    if (row.ulasan?.sentimen === "positif") item.positif++;
+    else if (row.ulasan?.sentimen === "negatif") item.negatif++;
+    else item.netral++;
+    if (row.kutipan && item.contoh.length < 3 && !item.contoh.includes(row.kutipan)) {
+      item.contoh.push(row.kutipan);
+    }
+  }
+
+  return Array.from(statistik.values()).sort((a, b) => b.total - a.total || a.nama.localeCompare(b.nama));
 }

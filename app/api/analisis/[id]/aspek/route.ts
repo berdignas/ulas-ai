@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { dapatkanStatistikAspek } from "@/lib/analyzer";
+import { dapatkanStatistikAspek, dapatkanStatistikLokasi } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const dari = url.searchParams.get("dari");
   const sampai = url.searchParams.get("sampai");
 
-  const statistik = await dapatkanStatistikAspek(analisisId, dari, sampai);
+  const [statistik, lokasi] = await Promise.all([
+    dapatkanStatistikAspek(analisisId, dari, sampai),
+    dapatkanStatistikLokasi(analisisId, dari, sampai),
+  ]);
   const urutKeluhan = [...statistik].sort((a, b) => b.negatif - a.negatif || b.positif + b.negatif - (a.positif + a.negatif));
   const urutPujian = [...statistik].sort((a, b) => b.positif - a.positif || b.positif + b.negatif - (a.positif + a.negatif));
 
@@ -22,5 +25,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     aspek: statistik,
     perluDiperbaiki: urutKeluhan.filter((a) => a.negatif > 0),
     perluDipertahankan: urutPujian.filter((a) => a.positif > 0),
+    lokasi,
   });
 }

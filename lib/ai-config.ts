@@ -26,6 +26,12 @@ const GEMINI_MODELS = [
     profile: "cepat" as const,
   },
   {
+    id: "gemini-3.5-flash",
+    label: "Gemini 3.5 Flash",
+    description: "Rekomendasi untuk akurasi lebih tinggi dengan latensi tetap rendah.",
+    profile: "seimbang" as const,
+  },
+  {
     id: "gemini-3.6-flash",
     label: "Gemini 3.6 Flash",
     description: "Keseimbangan kecepatan dan kedalaman analisis.",

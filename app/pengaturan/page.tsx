@@ -5,7 +5,9 @@ import {
   Building,
   Cpu,
   FloppyDisk,
+  MapPin,
   Shield,
+  SlidersHorizontal,
   SpinnerGap,
   TestTube,
   Trash,
@@ -20,9 +22,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
+import { LayananEditor } from "./_components/layanan-editor";
 
 type RumahSakit = {
   id: number;
@@ -53,6 +57,7 @@ function PengaturanContent() {
   const [rumahSakitList, setRumahSakitList] = useState<RumahSakit[]>([]);
   const [rsId] = useState<string | null>(searchParams?.get("rs") ?? null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"general" | "layanan">("general");
 
   const [form, setForm] = useState({
     nama: "",
@@ -173,6 +178,7 @@ function PengaturanContent() {
 
   const handleNew = () => {
     setSelectedId(null);
+    setActiveSettingsTab("general");
     setForm({
       nama: "",
       kode: "",
@@ -433,13 +439,33 @@ function PengaturanContent() {
         {/* Right Column: Detail Konfigurasi */}
         <div className="reveal lg:col-span-3" style={{ animationDelay: "100ms" }}>
           <Card className="h-full border shadow-xs">
+            <Tabs
+              value={activeSettingsTab}
+              onValueChange={(value) => setActiveSettingsTab(value as "general" | "layanan")}
+              className="gap-0"
+            >
             <CardHeader className="pb-4 border-b border-border/60">
               <CardTitle className="text-sm font-semibold tracking-tight">
                 {isNew ? "Tambah Rumah Sakit Baru" : "Detail Konfigurasi"}
               </CardTitle>
             </CardHeader>
 
-            <CardContent className="p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-4 sm:px-6">
+              <TabsList variant="line" className="h-12 w-full justify-start gap-2 sm:w-fit">
+                <TabsTrigger value="general" className="h-12 px-3 sm:px-4">
+                  <SlidersHorizontal className="size-4" aria-hidden="true" />
+                  Pengaturan umum
+                </TabsTrigger>
+                <TabsTrigger value="layanan" disabled={isNew} className="h-12 px-3 sm:px-4">
+                  <MapPin className="size-4" aria-hidden="true" />
+                  Unit layanan & poli
+                </TabsTrigger>
+              </TabsList>
+              {isNew && <span className="pb-3 text-[11px] text-muted-foreground sm:pb-0">Simpan RS dahulu untuk mengatur unit layanan.</span>}
+            </div>
+
+            <CardContent className="p-0">
+              <TabsContent value="general" className="space-y-4 p-4 sm:p-6">
               {/* Row 1: Nama Rumah Sakit */}
               <div className="space-y-1.5">
                 <Label htmlFor="nama" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -771,7 +797,13 @@ function PengaturanContent() {
                   )}
                 </div>
               )}
+              </TabsContent>
+
+              <TabsContent value="layanan" className="p-4 sm:p-6">
+                <LayananEditor rumahSakitId={selectedId} />
+              </TabsContent>
             </CardContent>
+            </Tabs>
           </Card>
         </div>
       </div>

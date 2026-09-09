@@ -80,6 +80,11 @@ export interface UlasanRow {
   bahasa?: string | null;
   sentimen?: Sentimen | null;
   sumberLabel?: string | null;
+  aiStatus?: string | null;
+  aiAttempts?: number | null;
+  aiErrorCode?: string | null;
+  aiErrorMessage?: string | null;
+  aiDiprosesPada?: Date | string | null;
   unitLayanan?: string | null;
   kategoriMasalah?: string | null;
   faktorUrgensiMedis?: boolean | null;
@@ -122,6 +127,26 @@ export interface UnitLayananRow {
   aktif?: boolean | null;
 }
 
+export interface LokasiLayananRsRow {
+  id: number;
+  rumahSakitId: number;
+  nama: string;
+  jenis: "poli" | "ruangan" | "unit" | "fasilitas";
+  kataKunci: string[];
+  aktif: boolean;
+  urutan: number;
+  dibuatPada?: Date | string;
+  diperbaruiPada?: Date | string;
+}
+
+export interface HasilLokasiUlasanRow {
+  id: number;
+  ulasanId: number;
+  lokasiLayananId: number;
+  metode: "keyword" | "ai";
+  kutipan?: string | null;
+}
+
 // Constant table names for Supabase REST API queries
 export const rumahSakit = "rumah_sakit";
 export const sinkronLog = "sinkron_log";
@@ -131,3 +156,5 @@ export const aspek = "aspek";
 export const hasilAspekUlasan = "hasil_aspek_ulasans";
 export const kategoriMasalah = "kategori_masalah";
 export const unitLayanan = "unit_layanan";
+export const lokasiLayananRs = "lokasi_layanan_rs";
+export const hasilLokasiUlasan = "hasil_lokasi_ulasans";
