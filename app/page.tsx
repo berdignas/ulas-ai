@@ -167,6 +167,8 @@ export default function DashboardPage() {
       if (!stored) localStorage.setItem(TIMER_KEY, String(startMs));
 
       const startDate = new Date(startMs);
+      // State timer memang disinkronkan dari localStorage pada perubahan status.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setWaktuMulaiAnalisis(startDate);
       setElapsedDetik(Math.floor((Date.now() - startMs) / 1000));
     } else if (statusAktif === "selesai") {
@@ -265,7 +267,7 @@ export default function DashboardPage() {
     } finally {
       setProsesUlangJalan(false);
     }
-  }, [dipilih, prosesUlangJalan, muatDaftar]);
+  }, [dipilih, prosesUlangJalan, muatDaftar, tambahLog]);
 
   const [konfirmasi, setKonfirmasi] = useState<"hapus" | "bersihkan" | null>(null);
   const [aksiJalan, setAksiJalan] = useState(false);

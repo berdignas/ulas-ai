@@ -268,7 +268,7 @@ export async function jalankanSinkronHarian(
     }
 
     let ulasanBaru = 0;
-    let ulasanKrisis = 0;
+    const ulasanKrisis = 0;
 
     for (const r of reviews) {
       const { namaPengulas, rating, teksUlasan, tanggalUlasan, tglReview, reviewId } = extractReviewData(r);

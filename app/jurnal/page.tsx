@@ -202,6 +202,8 @@ export default function JurnalPage() {
   }, [rumahSakitId]);
 
   useEffect(() => {
+    // Pemanggilan ini menyinkronkan tampilan dengan API setiap kali filter berubah.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
     fetchStatistik();
     fetchKrisisCount();
@@ -245,7 +247,7 @@ export default function JurnalPage() {
       } else {
         alert(`Gagal: ${data.pesanError}`);
       }
-    } catch (e) {
+    } catch {
       alert("Terjadi kesalahan saat sinkronisasi");
     } finally {
       setSyncLoading(false);
@@ -261,7 +263,7 @@ export default function JurnalPage() {
       });
       fetchData();
       fetchStatistik();
-    } catch (e) {
+    } catch {
       alert("Gagal memperbarui status");
     }
   };
@@ -304,8 +306,9 @@ export default function JurnalPage() {
     }
   };
 
-  const formatTanggalWaktu = (iso?: string | null, rawObj?: any) => {
-    const target = iso || (rawObj && (rawObj.tanggal_ulasan || rawObj.tanggalUlasan));
+  const formatTanggalWaktu = (iso?: string | null, rawObj?: Record<string, unknown> | null) => {
+    const rawTanggal = rawObj?.tanggal_ulasan ?? rawObj?.tanggalUlasan;
+    const target = iso || (typeof rawTanggal === "string" ? rawTanggal : null);
     if (!target) return "-";
     try {
       const d = new Date(target);

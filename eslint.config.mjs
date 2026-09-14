@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Skrip diagnostik lokal tidak menjadi bagian dari aplikasi produksi.
+    "test-*.js",
+    "scratch_*.ts",
   ]),
 ]);
 

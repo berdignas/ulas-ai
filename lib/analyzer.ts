@@ -175,7 +175,7 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
 
     let gagalDilabel = 0;
     let gagalAI = 0;
-    let pakaiAI = sudahDiproses.length > 0;
+    let pakaiAI = sudahDiproses.some((item) => item.sumberLabel === "ai");
     let tertundaKarenaAI: ReturnType<typeof getAIErrorInfo> | null = null;
     let errorAITerakhir: ReturnType<typeof getAIErrorInfo> | null = null;
     const cacheAspek = new Map<string, number>();

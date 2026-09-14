@@ -4,6 +4,7 @@ import { analisis, AnalisisRow } from "@/lib/db/schema";
 import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -19,15 +20,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   // Jika instance worker berakhir sebelum semua batch selesai, polling berikutnya
-  // memulai kembali dari checkpoint di database. Ulasan dengan sumber_label=ai
+  // memulai kembali dari checkpoint di database. Ulasan dengan sumber_label terisi
   // tidak diproses ulang, sehingga aman dijalankan di localhost maupun serverless.
-  let berjalanDiWorker = prosesSedangBerjalan(analisisId);
+  const berjalanDiWorker = prosesSedangBerjalan(analisisId);
   if (item.status === "berjalan" && !berjalanDiWorker) {
     // Auto-resume: worker mati tapi status masih "berjalan" — ini selalu resume, bukan restart.
     const proses = mulaiProsesAnalisis(analisisId, true);
     if (proses) {
       after(() => proses);
-      berjalanDiWorker = true;
       console.info(`[ai] melanjutkan analisis ${analisisId} dari checkpoint database`);
     }
   }
@@ -35,10 +35,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   return NextResponse.json({
     status: item.status,
     totalUlasan: item.totalUlasan,
-    ulasanDiproses:
-      berjalanDiWorker || item.status === "berjalan" || item.status === "berhenti"
-        ? item.ulasanDiproses
-        : item.totalUlasan,
+    // Hanya status selesai yang boleh ditampilkan 100%. Status gagal tetap memakai
+    // checkpoint agar UI tidak mengklaim seluruh ulasan sudah diproses.
+    ulasanDiproses: item.status === "selesai" ? item.totalUlasan : item.ulasanDiproses,
     catatan: item.catatan,
   });
 }

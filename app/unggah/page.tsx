@@ -43,6 +43,11 @@ interface HasilUpload {
   status?: string;
 }
 
+interface ApiResponse {
+  error?: string;
+  message?: string;
+}
+
 export default function UnggahPage() {
   return (
     <Suspense
@@ -73,6 +78,7 @@ function UnggahInner() {
   const [berhentiJalan, setBerhentiJalan] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const elapsedDetikRef = useRef(0);
 
   const idAktif = hasil?.id ?? (lanjutId && Number.isFinite(Number(lanjutId)) ? Number(lanjutId) : null);
 
@@ -103,8 +109,8 @@ function UnggahInner() {
               }
               localStorage.removeItem(`analisis-timer-${id}`);
             } catch {}
-            if (!finalDurasi && elapsedDetik > 0) {
-              finalDurasi = formatDurasi(elapsedDetik);
+            if (!finalDurasi && elapsedDetikRef.current > 0) {
+              finalDurasi = formatDurasi(elapsedDetikRef.current);
             }
             setDurasiSelesai(finalDurasi);
             if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
@@ -132,7 +138,7 @@ function UnggahInner() {
         }
       }, 1500);
     },
-    [berhentiPolling, elapsedDetik]
+    [berhentiPolling]
   );
 
   useEffect(() => {
@@ -158,10 +164,10 @@ function UnggahInner() {
       }
     } catch {}
 
-    setElapsedDetik(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
-
     const interval = setInterval(() => {
-      setElapsedDetik(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+      const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      elapsedDetikRef.current = elapsed;
+      setElapsedDetik(elapsed);
     }, 1000);
 
     return () => clearInterval(interval);
@@ -174,7 +180,7 @@ function UnggahInner() {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      let data: any = null;
+      let data: (HasilUpload & ApiResponse) | null = null;
       try {
         data = await res.json();
       } catch {
@@ -182,6 +188,11 @@ function UnggahInner() {
       }
       if (!res.ok) {
         setError(data?.error ?? data?.message ?? `Gagal mengunggah file (Status ${res.status}).`);
+        setTahap("pilih");
+        return;
+      }
+      if (!data) {
+        setError("Respons unggah dari server tidak valid.");
         setTahap("pilih");
         return;
       }
@@ -214,6 +225,7 @@ function UnggahInner() {
     if (!hasil) return;
     setError(null);
     setBerhentiJalan(false);
+    elapsedDetikRef.current = 0;
     setElapsedDetik(0);
     setDurasiSelesai(null);
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
@@ -221,7 +233,7 @@ function UnggahInner() {
     }
     try {
       const res = await fetch(`/api/analisis/${hasil.id}/process`, { method: "POST" });
-      let data: any = null;
+      let data: ApiResponse | null = null;
       try {
         data = await res.json();
       } catch {
@@ -247,6 +259,7 @@ function UnggahInner() {
     setHasil(null);
     setError(null);
     setProgres({ diproses: 0, total: 0 });
+    elapsedDetikRef.current = 0;
     setElapsedDetik(0);
     setDurasiSelesai(null);
     setTahap("pilih");

@@ -13,7 +13,6 @@ import {
   Download,
   Calendar as CalendarIcon,
   Image as ImageIcon,
-  X,
   FloppyDisk,
   Trash,
 } from "@phosphor-icons/react";
@@ -100,9 +99,9 @@ export default function ExportPage() {
   useEffect(() => {
     fetch("/api/rumah-sakit")
       .then((res) => res.json())
-      .then((data) => {
+      .then((data: { rumahSakit?: RumahSakitItem[] }) => {
         if (data.rumahSakit?.length) {
-          const list: RumahSakitItem[] = data.rumahSakit.map((rs: any) => ({
+          const list: RumahSakitItem[] = data.rumahSakit.map((rs) => ({
             id: rs.id,
             nama: rs.nama,
             kopSurat: rs.kopSurat ?? null,
