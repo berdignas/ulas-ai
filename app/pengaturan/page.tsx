@@ -89,7 +89,7 @@ function PengaturanContent() {
     providerName: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
     apiKey: "",
-    model: "llama-3.3-70b-versatile",
+    model: "llama-3.1-8b-instant",
   });
 
   const [modelOptions, setModelOptions] = useState<AIModelOption[]>([]);
@@ -133,7 +133,7 @@ function PengaturanContent() {
               providerName: rs.customAI?.providerName || "Custom Provider",
               baseUrl: rs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
               apiKey: "",
-              model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.3-70b-versatile",
+              model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.1-8b-instant",
             });
           }
           setForm({
@@ -162,7 +162,7 @@ function PengaturanContent() {
             providerName: firstRs.customAI?.providerName || "Custom Provider",
             baseUrl: firstRs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
             apiKey: "",
-            model: firstRs.customAI?.model || firstRs.aiModel?.replace(/^custom:/, "") || "llama-3.3-70b-versatile",
+            model: firstRs.customAI?.model || firstRs.aiModel?.replace(/^custom:/, "") || "llama-3.1-8b-instant",
           });
         }
         setForm({
@@ -203,7 +203,7 @@ function PengaturanContent() {
         providerName: rs.customAI?.providerName || "Custom Provider",
         baseUrl: rs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
         apiKey: "",
-        model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.3-70b-versatile",
+        model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.1-8b-instant",
       });
     }
     setForm({
@@ -235,7 +235,7 @@ function PengaturanContent() {
       providerName: "Groq",
       baseUrl: "https://api.groq.com/openai/v1",
       apiKey: "",
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
     });
     setForm({
       nama: "",
@@ -804,17 +804,36 @@ function PengaturanContent() {
                             ...p,
                             providerName: "Groq",
                             baseUrl: "https://api.groq.com/openai/v1",
+                            model: "llama-3.1-8b-instant",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "Groq" && customAIForm.model === "llama-3.1-8b-instant"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Groq (Llama 3.1 8B - Cepat)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "Groq",
+                            baseUrl: "https://api.groq.com/openai/v1",
                             model: "llama-3.3-70b-versatile",
                           }))
                         }
                         className={cn(
                           "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
-                          customAIForm.providerName === "Groq"
+                          customAIForm.providerName === "Groq" && customAIForm.model === "llama-3.3-70b-versatile"
                             ? "bg-blue-600 text-white border-blue-600 shadow-xs"
                             : "bg-background border-border text-foreground hover:bg-muted"
                         )}
                       >
-                        Groq (Llama 3.3)
+                        Groq (Llama 3.3 70B)
                       </button>
                       <button
                         type="button"

@@ -95,7 +95,11 @@ export async function POST(req: Request) {
       if (res.status === 401) {
         detailHint = " — Kunci API (API Key) tidak valid atau salah salin.";
       } else if (res.status === 404) {
-        detailHint = " — Endpoint URL atau nama Model tidak ditemukan di provider ini.";
+        if (/does not exist or you do not have access/i.test(errorMessage)) {
+          detailHint = " — Akun Groq Anda belum memiliki akses ke model 70B ini. Solusi: Gunakan model 'llama-3.1-8b-instant' yang aktif dan gratis untuk seluruh akun Groq.";
+        } else {
+          detailHint = " — Endpoint URL atau nama Model tidak ditemukan di provider ini.";
+        }
       } else if (res.status === 429) {
         detailHint = " — Batas kuota (rate limit) provider telah tercapai.";
       }
