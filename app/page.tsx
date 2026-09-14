@@ -69,6 +69,9 @@ export default function DashboardPage() {
   const [prosesUlangJalan, setProsesUlangJalan] = useState(false);
   const [pesanProsesUlang, setPesanProsesUlang] = useState<string | null>(null);
   const [hentikanJalan, setHentikanJalan] = useState(false);
+  const [waktuMulaiAnalisis, setWaktuMulaiAnalisis] = useState<Date | null>(null);
+  const [elapsedDetik, setElapsedDetik] = useState(0);
+  const [logAktivitas, setLogAktivitas] = useState<{ waktu: string; pesan: string; tipe: "info" | "sukses" | "error" | "peringatan" }[]>([]);
   const [namaRS, setNamaRS] = useState<string>("Rumah Sakit Umum");
   const [rumahSakitId, setRumahSakitId] = useState<number | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
@@ -128,6 +131,29 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [statusAktif, muatDaftar]);
 
+  // Start/stop elapsed timer
+  useEffect(() => {
+    if (statusAktif === "berjalan") {
+      setWaktuMulaiAnalisis((prev) => prev ?? new Date());
+      setElapsedDetik(0);
+    } else {
+      setWaktuMulaiAnalisis(null);
+    }
+  }, [statusAktif]);
+
+  useEffect(() => {
+    if (!waktuMulaiAnalisis) return;
+    const interval = setInterval(() => {
+      setElapsedDetik(Math.floor((Date.now() - waktuMulaiAnalisis.getTime()) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [waktuMulaiAnalisis]);
+
+  const tambahLog = (pesan: string, tipe: "info" | "sukses" | "error" | "peringatan" = "info") => {
+    const waktu = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLogAktivitas((prev) => [{ waktu, pesan, tipe }, ...prev].slice(0, 50));
+  };
+
   useEffect(() => {
     if (dipilih === null) {
       return;
@@ -155,11 +181,14 @@ export default function DashboardPage() {
       const data = (await res.json()) as { pakaiAI?: boolean; pesan?: string };
       if (res.ok && data.pakaiAI === false) {
         setPesanProsesUlang(data.pesan ?? "Kunci API AI belum diatur.");
+        tambahLog("Analisis dimulai tanpa AI — sentimen ditentukan dari rating bintang.", "peringatan");
       } else {
+        tambahLog("Memulai proses analisis AI...", "info");
         await muatDaftar();
       }
     } catch {
       setPesanProsesUlang("Tidak dapat memulai proses ulang. Coba lagi.");
+      tambahLog("Gagal memulai proses analisis. Periksa koneksi.", "error");
     } finally {
       setProsesUlangJalan(false);
     }
@@ -197,6 +226,7 @@ export default function DashboardPage() {
     setSyncLoading(true);
     setPesanAksi(null);
     setPesanSukses(null);
+    tambahLog(`Memulai penarikan data Google Maps — periode: ${periode}`, "info");
     try {
       const res = await fetch("/api/sinkron", {
         method: "POST",
@@ -209,14 +239,18 @@ export default function DashboardPage() {
         if (list[0]) setDipilih(list[0].id);
         if (data.ulasanBaru === 0) {
           setPesanSukses("Sinkronisasi selesai: Tidak ditemukan ulasan baru untuk periode ini.");
+          tambahLog("Tarik data selesai — tidak ada ulasan baru.", "info");
         } else {
           setPesanSukses(`Berhasil menarik ${data.ulasanBaru} ulasan baru dari Google Maps.`);
+          tambahLog(`${data.ulasanBaru} ulasan baru berhasil ditarik dari Google Maps.`, "sukses");
         }
       } else {
         setPesanAksi(`Gagal tarik data: ${data.pesanError}`);
+        tambahLog(`Tarik data gagal: ${data.pesanError}`, "error");
       }
     } catch {
       setPesanAksi("Terjadi kesalahan saat menarik data.");
+      tambahLog("Kesalahan jaringan saat menarik data.", "error");
     } finally {
       setSyncLoading(false);
     }
@@ -438,14 +472,30 @@ export default function DashboardPage() {
       )}
 
       {aktif.status !== "selesai" && (
-        <div className="reveal mb-6 rounded-xl border border-border bg-card px-6 py-5">
+        <div className="reveal mb-6 rounded-xl border border-border bg-card px-6 py-5 space-y-4">
           {aktif.status === "gagal" ? (
-            <div className="flex items-start gap-3">
-              <WarningCircle className="mt-0.5 size-5 shrink-0 text-rose-600" weight="duotone" />
-              <div>
-                <p className="text-sm font-semibold text-rose-900">Proses analisis gagal</p>
-                {aktif.catatan && <p className="mt-1 text-sm text-rose-800/90">{aktif.catatan}</p>}
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <WarningCircle className="mt-0.5 size-5 shrink-0 text-rose-600" weight="duotone" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-rose-900">Proses analisis gagal</p>
+                  {aktif.catatan && <p className="mt-1 text-sm text-rose-800/80 leading-relaxed">{aktif.catatan}</p>}
+                </div>
+                <Badge variant="destructive" className="shrink-0 text-[10px]">Gagal</Badge>
               </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button size="sm" variant="outline" onClick={prosesUlangDenganAI} disabled={prosesUlangJalan} className="gap-2">
+                  {prosesUlangJalan ? (
+                    <SpinnerGap className="size-3.5 animate-spin" weight="duotone" />
+                  ) : (
+                    <ArrowsClockwise className="size-3.5" weight="duotone" />
+                  )}
+                  Coba analisis ulang
+                </Button>
+              </div>
+              {pesanProsesUlang && (
+                <p className="text-xs font-medium text-rose-700 pl-0.5">{pesanProsesUlang}</p>
+              )}
             </div>
           ) : aktif.status === "berhenti" ? (
             <div className="space-y-3">
@@ -453,35 +503,53 @@ export default function DashboardPage() {
                 <StopCircle className="mt-0.5 size-5 shrink-0 text-amber-600" weight="duotone" />
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-amber-900">Analisis dihentikan</p>
-                  {aktif.catatan && <p className="mt-1 text-sm text-amber-800/90">{aktif.catatan}</p>}
+                  {aktif.catatan && <p className="mt-1 text-sm text-amber-800/80 leading-relaxed">{aktif.catatan}</p>}
                 </div>
-                <Badge variant="warning" className="shrink-0">
-                  Dihentikan
-                </Badge>
+                <Badge variant="warning" className="shrink-0">Dihentikan</Badge>
               </div>
-              <Button size="sm" variant="outline" onClick={prosesUlangDenganAI} disabled={prosesUlangJalan}>
+              <Button size="sm" variant="outline" onClick={prosesUlangDenganAI} disabled={prosesUlangJalan} className="gap-2">
                 {prosesUlangJalan ? (
-                  <SpinnerGap className="size-4 animate-spin" weight="duotone" />
+                  <SpinnerGap className="size-3.5 animate-spin" weight="duotone" />
                 ) : (
-                  <ArrowsClockwise className="size-4" />
+                  <ArrowsClockwise className="size-3.5" weight="duotone" />
                 )}
                 Proses ulang dengan AI
               </Button>
             </div>
           ) : (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2.5 text-sm">
-                <SpinnerGap className="size-4 animate-spin text-primary" weight="duotone" />
-                <span className="font-medium">
-                  {aktif.status === "berjalan"
-                    ? `Menganalisis ${aktif.ulasanDiproses} dari ${aktif.totalUlasan} ulasan…`
-                    : "Menunggu proses analisis dimulai."}
-                </span>
-                <Badge variant="default" className="ml-auto">
-                  Berjalan
-                </Badge>
+            <div className="space-y-4">
+              {/* Progress header */}
+              <div className="flex items-center gap-2.5">
+                <SpinnerGap className="size-4 animate-spin text-primary shrink-0" weight="duotone" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium">
+                    {aktif.status === "berjalan"
+                      ? `Menganalisis ${aktif.ulasanDiproses} dari ${aktif.totalUlasan} ulasan`
+                      : "Menunggu proses analisis dimulai"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {aktif.status === "berjalan" && elapsedDetik > 0 && (
+                    <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                      {String(Math.floor(elapsedDetik / 60)).padStart(2, "0")}:{String(elapsedDetik % 60).padStart(2, "0")}
+                    </span>
+                  )}
+                  <Badge variant="default" className="text-[10px]">Berjalan</Badge>
+                </div>
               </div>
-              <Progress value={aktif.totalUlasan > 0 ? (aktif.ulasanDiproses / aktif.totalUlasan) * 100 : 0} />
+
+              {/* Progress bar + percentage */}
+              <div className="space-y-1.5">
+                <Progress value={aktif.totalUlasan > 0 ? (aktif.ulasanDiproses / aktif.totalUlasan) * 100 : 0} />
+                {aktif.totalUlasan > 0 && (
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+                    <span>{aktif.ulasanDiproses} selesai</span>
+                    <span>{Math.round((aktif.ulasanDiproses / aktif.totalUlasan) * 100)}% — sisa {aktif.totalUlasan - aktif.ulasanDiproses} ulasan</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Action buttons */}
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" render={<Link href={`/unggah?lanjut=${aktif.id}`} />}>
                   Lihat proses unggah
@@ -495,13 +563,36 @@ export default function DashboardPage() {
                     className="border-amber-300/70 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
                   >
                     {hentikanJalan ? (
-                      <SpinnerGap className="size-4 animate-spin" weight="duotone" />
+                      <SpinnerGap className="size-3.5 animate-spin" weight="duotone" />
                     ) : (
-                      <StopCircle className="size-4" weight="duotone" />
+                      <StopCircle className="size-3.5" weight="duotone" />
                     )}
                     {hentikanJalan ? "Menghentikan…" : "Hentikan analisis"}
                   </Button>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Activity Log Panel */}
+          {logAktivitas.length > 0 && (
+            <div className="border-t border-border pt-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Log Aktivitas</p>
+              <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                {logAktivitas.map((log, i) => (
+                  <div key={i} className="flex items-start gap-2.5 text-[11px]">
+                    <span className="font-mono text-muted-foreground/60 shrink-0 tabular-nums">{log.waktu}</span>
+                    <span className={cn(
+                      "leading-relaxed",
+                      log.tipe === "sukses" && "text-emerald-700",
+                      log.tipe === "error" && "text-rose-700",
+                      log.tipe === "peringatan" && "text-amber-700",
+                      log.tipe === "info" && "text-foreground/70"
+                    )}>
+                      {log.pesan}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}

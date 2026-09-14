@@ -18,6 +18,7 @@ import {
   Flag,
   MagnifyingGlass,
   Shield,
+  Sparkle,
   SpinnerGap,
   Star,
   X,
@@ -106,6 +107,8 @@ export default function JurnalPage() {
   const [selectedUlasanDetail, setSelectedUlasanDetail] = useState<Ulasan | null>(null);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 20;
+  const [analisisManualJalan, setAnalisisManualJalan] = useState<number | null>(null);
+  const [analisisManualPesan, setAnalisisManualPesan] = useState<{ id: number; pesan: string; tipe: "sukses" | "error" | "peringatan" } | null>(null);
 
   // Auto-fetch active RS on mount
   useEffect(() => {
@@ -261,6 +264,39 @@ export default function JurnalPage() {
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
     alert("Teks disalin ke clipboard");
+  };
+
+  const handleAnalisisManual = async (u: Ulasan) => {
+    if (analisisManualJalan !== null) return;
+    setAnalisisManualJalan(u.id);
+    setAnalisisManualPesan(null);
+    try {
+      const res = await fetch("/api/jurnal/analisis-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ulasanId: u.id }),
+      });
+      const data = await res.json();
+      if (data.sukses) {
+        const tipe = data.pesanError ? "peringatan" : "sukses";
+        setAnalisisManualPesan({
+          id: u.id,
+          pesan: data.pesanError
+            ? data.pesanError
+            : `Analisis selesai. Sentimen: ${data.sentimen ?? "-"}`,
+          tipe,
+        });
+        fetchData();
+        fetchStatistik();
+      } else {
+        setAnalisisManualPesan({ id: u.id, pesan: data.error ?? "Analisis gagal.", tipe: "error" });
+      }
+    } catch {
+      setAnalisisManualPesan({ id: u.id, pesan: "Terjadi kesalahan jaringan.", tipe: "error" });
+    } finally {
+      setAnalisisManualJalan(null);
+      setTimeout(() => setAnalisisManualPesan(null), 6000);
+    }
   };
 
   const formatTanggalWaktu = (iso?: string | null, rawObj?: any) => {
@@ -459,6 +495,24 @@ export default function JurnalPage() {
         </div>
       )}
 
+      {/* Notifikasi hasil analisis manual */}
+      {analisisManualPesan && (
+        <div className={cn(
+          "flex items-center justify-between rounded-lg border px-4 py-2.5 text-xs shadow-2xs",
+          analisisManualPesan.tipe === "sukses" && "border-emerald-200 bg-emerald-50 text-emerald-900",
+          analisisManualPesan.tipe === "error" && "border-rose-200 bg-rose-50 text-rose-900",
+          analisisManualPesan.tipe === "peringatan" && "border-amber-200 bg-amber-50 text-amber-900",
+        )}>
+          <div className="flex items-center gap-2">
+            <Sparkle className="size-3.5 shrink-0" weight="duotone" />
+            <span>{analisisManualPesan.pesan}</span>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setAnalisisManualPesan(null)} className="h-auto p-0 text-muted-foreground hover:text-foreground">
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      )}
+
       {/* Alert Status & Last Sync */}
       <div className="flex flex-wrap items-center gap-3">
         <div className={cn(
@@ -468,7 +522,7 @@ export default function JurnalPage() {
           <Shield className="size-4 shrink-0" weight="duotone" />
           <span>
             {krisisCount > 0
-              ? `⚠ ${krisisCount} ulasan krisis belum ditinjau`
+              ? `${krisisCount} ulasan krisis belum ditinjau`
               : "Tidak ada ulasan krisis yang membutuhkan tindakan mendesak"}
           </span>
         </div>
@@ -605,7 +659,7 @@ export default function JurnalPage() {
                               <DotsThreeVertical className="size-3.5" weight="bold" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuContent align="end" className="w-52">
                             <DropdownMenuItem
                               onClick={() => setSelectedUlasanDetail(u)}
                               className="flex items-center gap-2 cursor-pointer"
@@ -628,6 +682,23 @@ export default function JurnalPage() {
                                 <Copy className="size-4 text-emerald-600" weight="duotone" />
                                 Salin Draf Balasan
                               </DropdownMenuItem>
+                            )}
+                            {!u.sentimen && (
+                              <>
+                                <div className="my-1 h-px bg-border" />
+                                <DropdownMenuItem
+                                  onClick={() => handleAnalisisManual(u)}
+                                  disabled={analisisManualJalan !== null}
+                                  className="flex items-center gap-2 cursor-pointer text-primary focus:text-primary"
+                                >
+                                  {analisisManualJalan === u.id ? (
+                                    <SpinnerGap className="size-4 animate-spin" weight="duotone" />
+                                  ) : (
+                                    <Sparkle className="size-4" weight="duotone" />
+                                  )}
+                                  {analisisManualJalan === u.id ? "Menganalisis..." : "Analisis dengan AI"}
+                                </DropdownMenuItem>
+                              </>
                             )}
                           </DropdownMenuContent>
                         </DropdownMenu>
