@@ -380,9 +380,32 @@ function RankingCard({ title, description, icon, items, fokus }: { title: string
       {items.length === 0 ? <p className="px-5 py-8 text-center text-xs text-muted-foreground">Belum ada data.</p> : items.map((item, index) => {
         const total = item.positif + item.negatif + item.netral;
         const nilai = fokus === "negatif" ? item.negatif : item.positif;
-        return <div key={item.id} className="px-5 py-3.5">
+        const lokasiTerkait = fokus === "negatif" ? item.lokasiNegatif : item.lokasiPositif;
+        return <div key={item.id} className="space-y-2 px-5 py-3.5">
           <div className="flex items-center justify-between gap-4"><span className="text-sm font-medium"><span className="mr-2 font-mono text-xs text-muted-foreground">{index + 1}.</span>{item.namaAspek}</span><span className="shrink-0 text-xs text-muted-foreground">{nilai} dari {total}</span></div>
-          <div className={cn("mt-2 h-1.5 rounded-full bg-muted", fokus === "negatif" ? "[&>div]:bg-rose-500" : "[&>div]:bg-emerald-500")}><div className="h-full rounded-full" style={{ width: `${persen(nilai, total)}%` }} /></div>
+          <div className={cn("h-1.5 rounded-full bg-muted", fokus === "negatif" ? "[&>div]:bg-rose-500" : "[&>div]:bg-emerald-500")}><div className="h-full rounded-full transition-all" style={{ width: `${persen(nilai, total)}%` }} /></div>
+          {lokasiTerkait && lokasiTerkait.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground/80">
+                <MapPin className="size-3 shrink-0 text-muted-foreground" weight="bold" />
+                Sering disebut di:
+              </span>
+              {lokasiTerkait.map((lok) => (
+                <span
+                  key={lok.nama}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+                    fokus === "negatif"
+                      ? "border border-rose-200/70 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300"
+                      : "border border-emerald-200/70 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300"
+                  )}
+                >
+                  <span>{lok.nama}</span>
+                  <span className="font-mono text-[10px] opacity-75">({lok.total}x)</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>;
       })}
     </div>

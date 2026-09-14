@@ -26,12 +26,20 @@ export interface UlasanItem {
   sumberLabel: string | null;
 }
 
+export interface LokasiTerkaitItem {
+  nama: string;
+  jenis?: "poli" | "ruangan" | "unit" | "fasilitas" | string;
+  total: number;
+}
+
 export interface StatistikAspek {
   id: number;
   namaAspek: string;
   positif: number;
   negatif: number;
   netral: number;
+  lokasiNegatif?: LokasiTerkaitItem[];
+  lokasiPositif?: LokasiTerkaitItem[];
 }
 
 export interface StatistikLokasi {

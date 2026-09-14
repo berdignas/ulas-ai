@@ -490,12 +490,20 @@ async function dapatkanAspekId(namaAspek: string, cache: Map<string, number>): P
   throw new Error("Gagal menyimpan aspek: " + kunci);
 }
 
+export interface LokasiTerkaitItem {
+  nama: string;
+  jenis?: string;
+  total: number;
+}
+
 export interface StatistikAspek {
   id: number;
   namaAspek: string;
   positif: number;
   negatif: number;
   netral: number;
+  lokasiNegatif?: LokasiTerkaitItem[];
+  lokasiPositif?: LokasiTerkaitItem[];
 }
 
 export async function dapatkanStatistikAspek(
@@ -504,30 +512,73 @@ export async function dapatkanStatistikAspek(
   sampai?: string | null
 ): Promise<StatistikAspek[]> {
   let query = supabase.from(hasilAspekUlasan)
-    .select("sentimen_aspek, aspek(id, nama_aspek), ulasan!inner(analisis_id, tanggal_ulasan)")
+    .select("ulasan_id, sentimen_aspek, aspek(id, nama_aspek), ulasan!inner(id, analisis_id, tanggal_ulasan, unit_layanan)")
+    .eq("ulasan.analisis_id", analisisId);
+
+  let queryLokasi = supabase.from(hasilLokasiUlasan)
+    .select("ulasan_id, lokasi_layanan_rs(id, nama, jenis), ulasan!inner(analisis_id, tanggal_ulasan)")
     .eq("ulasan.analisis_id", analisisId);
 
   if (dari) {
     const tglDari = new Date(dari);
     tglDari.setHours(0, 0, 0, 0);
     query = query.gte("ulasan.tanggal_ulasan", tglDari.toISOString());
+    queryLokasi = queryLokasi.gte("ulasan.tanggal_ulasan", tglDari.toISOString());
   }
 
   if (sampai) {
     const tglSampai = new Date(sampai);
     tglSampai.setHours(23, 59, 59, 999);
     query = query.lte("ulasan.tanggal_ulasan", tglSampai.toISOString());
+    queryLokasi = queryLokasi.lte("ulasan.tanggal_ulasan", tglSampai.toISOString());
   }
 
-  const { data: hasilRaw } = await query;
+  const [{ data: hasilRaw }, { data: lokasiRaw }] = await Promise.all([
+    query,
+    queryLokasi,
+  ]);
 
-  const mapStats = new Map<string, StatistikAspek>();
+  // Map ulasanId -> Map<namaLokasi, { nama: string; jenis?: string }>
+  const ulasanKeLokasi = new Map<number, Map<string, { nama: string; jenis?: string }>>();
+
+  if (lokasiRaw) {
+    const lokasiTerstruktur = lokasiRaw as unknown as Array<{
+      ulasan_id: number;
+      lokasi_layanan_rs: { id: number; nama: string; jenis: string } | null;
+    }>;
+    for (const row of lokasiTerstruktur) {
+      const lok = row.lokasi_layanan_rs;
+      if (!lok?.nama) continue;
+      if (!ulasanKeLokasi.has(row.ulasan_id)) {
+        ulasanKeLokasi.set(row.ulasan_id, new Map());
+      }
+      ulasanKeLokasi.get(row.ulasan_id)!.set(lok.nama, {
+        nama: lok.nama,
+        jenis: lok.jenis,
+      });
+    }
+  }
+
+  interface AspekAccumulator {
+    id: number;
+    namaAspek: string;
+    positif: number;
+    negatif: number;
+    netral: number;
+    lokasiNegatifMap: Map<string, { nama: string; jenis?: string; total: number }>;
+    lokasiPositifMap: Map<string, { nama: string; jenis?: string; total: number }>;
+  }
+
+  const mapAccumulator = new Map<string, AspekAccumulator>();
 
   if (hasilRaw) {
     const hasilTerstruktur = hasilRaw as unknown as Array<{
+      ulasan_id: number;
       sentimen_aspek: string;
       aspek: { id: number; nama_aspek: string } | null;
+      ulasan: { id: number; analisis_id: number; tanggal_ulasan: string; unit_layanan?: string | null } | null;
     }>;
+
     for (const item of hasilTerstruktur) {
       const asp = item.aspek;
       if (!asp) continue;
@@ -535,18 +586,77 @@ export async function dapatkanStatistikAspek(
       const id = ASPEK_UMUM.indexOf(namaAspek) + 1;
       const sentimen = item.sentimen_aspek;
 
-      if (!mapStats.has(namaAspek)) {
-        mapStats.set(namaAspek, { id, namaAspek, positif: 0, negatif: 0, netral: 0 });
+      if (!mapAccumulator.has(namaAspek)) {
+        mapAccumulator.set(namaAspek, {
+          id,
+          namaAspek,
+          positif: 0,
+          negatif: 0,
+          netral: 0,
+          lokasiNegatifMap: new Map(),
+          lokasiPositifMap: new Map(),
+        });
       }
 
-      const st = mapStats.get(namaAspek)!;
-      if (sentimen === "positif") st.positif++;
-      else if (sentimen === "negatif") st.negatif++;
-      else if (sentimen === "netral") st.netral++;
+      const acc = mapAccumulator.get(namaAspek)!;
+      if (sentimen === "positif") acc.positif++;
+      else if (sentimen === "negatif") acc.negatif++;
+      else if (sentimen === "netral") acc.netral++;
+
+      // Cari lokasi terkait ulasan ini
+      let lokasiReview = ulasanKeLokasi.get(item.ulasan_id);
+      // Fallback ke ulasan.unit_layanan jika tidak ada lokasi layanan spesifik
+      if ((!lokasiReview || lokasiReview.size === 0) && item.ulasan?.unit_layanan && item.ulasan.unit_layanan !== "Lainnya") {
+        lokasiReview = new Map([
+          [item.ulasan.unit_layanan, { nama: item.ulasan.unit_layanan, jenis: "unit" }]
+        ]);
+        ulasanKeLokasi.set(item.ulasan_id, lokasiReview);
+      }
+
+      if (lokasiReview && lokasiReview.size > 0) {
+        if (sentimen === "negatif") {
+          for (const [nama, info] of lokasiReview.entries()) {
+            const cur = acc.lokasiNegatifMap.get(nama);
+            if (cur) {
+              cur.total++;
+            } else {
+              acc.lokasiNegatifMap.set(nama, { nama, jenis: info.jenis, total: 1 });
+            }
+          }
+        } else if (sentimen === "positif") {
+          for (const [nama, info] of lokasiReview.entries()) {
+            const cur = acc.lokasiPositifMap.get(nama);
+            if (cur) {
+              cur.total++;
+            } else {
+              acc.lokasiPositifMap.set(nama, { nama, jenis: info.jenis, total: 1 });
+            }
+          }
+        }
+      }
     }
   }
 
-  return Array.from(mapStats.values()).sort((a, b) => a.id - b.id);
+  return Array.from(mapAccumulator.values())
+    .map((acc) => {
+      const lokasiNegatif = Array.from(acc.lokasiNegatifMap.values())
+        .sort((a, b) => b.total - a.total || a.nama.localeCompare(b.nama))
+        .slice(0, 3);
+      const lokasiPositif = Array.from(acc.lokasiPositifMap.values())
+        .sort((a, b) => b.total - a.total || a.nama.localeCompare(b.nama))
+        .slice(0, 3);
+
+      return {
+        id: acc.id,
+        namaAspek: acc.namaAspek,
+        positif: acc.positif,
+        negatif: acc.negatif,
+        netral: acc.netral,
+        lokasiNegatif: lokasiNegatif.length > 0 ? lokasiNegatif : undefined,
+        lokasiPositif: lokasiPositif.length > 0 ? lokasiPositif : undefined,
+      };
+    })
+    .sort((a, b) => a.id - b.id);
 }
 
 export interface StatistikLokasi {
