@@ -498,7 +498,8 @@ function cocokanSentimen(raw: string): Sentimen | null {
 }
 
 function extractJson(text: string): unknown {
-  const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   if (!cleaned) throw new Error("Respons AI kosong");
   try {
     return JSON.parse(cleaned);
@@ -509,7 +510,16 @@ function extractJson(text: string): unknown {
       try {
         return JSON.parse(cleaned.slice(start, end + 1));
       } catch {
-        throw new Error("Respons AI bukan JSON valid");
+        // Lanjutkan mencoba parse array
+      }
+    }
+    const startArr = cleaned.indexOf("[");
+    const endArr = cleaned.lastIndexOf("]");
+    if (startArr >= 0 && endArr > startArr) {
+      try {
+        return JSON.parse(cleaned.slice(startArr, endArr + 1));
+      } catch {
+        // Gagal
       }
     }
     throw new Error("Respons AI bukan JSON valid");
@@ -1089,7 +1099,9 @@ async function callOnceOpenAIBatch(
       throw new Error(`AI Gateway batch error ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
 
-    const data = await res.json();
+    const data = (await parseResponseJson(res)) as {
+      choices?: { message?: { content?: string } }[];
+    };
     const content = data.choices?.[0]?.message?.content ?? "";
     const parsed = extractJson(content);
     if (typeof parsed !== "object" || parsed === null) {

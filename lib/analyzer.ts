@@ -106,8 +106,11 @@ function buatBatchAdaptif(items: UlasanRow[]): UlasanRow[][] {
 async function prosesAnalisis(analisisId: number): Promise<void> {
   const mulaiWaktuMs = Date.now();
   try {
+    // Hanya update status ke "berjalan" tanpa menghapus catatan/kondisiUmum.
+    // Penghapusan catatan/kondisiUmum sudah dilakukan di /process route berdasarkan
+    // apakah ini resume atau restart penuh. Di sini cukup pastikan status = berjalan.
     await supabase.from(analisis)
-      .update(toSnake({ status: "berjalan", catatan: null, kondisiUmum: null }))
+      .update(toSnake({ status: "berjalan" }))
       .eq("id", analisisId);
 
     const { data: daftarUlasanRaw } = await supabase.from(ulasan).select("*").eq("analisis_id", analisisId);
@@ -153,6 +156,8 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
         .in("id", idBelum);
     }
 
+    // Simpan checkpoint awal — jumlah ulasan yang sudah selesai dianalisis sebelum
+    // sesi ini dimulai. Ini memastikan progress bar tidak mundur saat resume.
     let ulasanDiprosesCounter = sudahDiproses.length;
     await supabase.from(analisis)
       .update(toSnake({ totalUlasan: daftarUlasan.length, ulasanDiproses: ulasanDiprosesCounter }))

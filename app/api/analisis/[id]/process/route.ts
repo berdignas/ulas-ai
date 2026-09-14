@@ -35,11 +35,17 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   }
 
   const ulangi = item.status === "selesai" || item.status === "berhenti";
+  const isResume = item.status === "berhenti";
   // Catat status sebelum response dikirim. Tanpa ini, polling dapat membaca
   // status lama ketika worker after() belum sempat mulai di deployment serverless.
+  // Saat resume (berhenti → berjalan), pertahankan catatan progres sebelumnya.
+  // Saat mulai ulang penuh (selesai → berjalan), reset catatan dan kondisiUmum.
+  const updatePayload = isResume
+    ? toSnake({ status: "berjalan" })
+    : toSnake({ status: "berjalan", catatan: null, kondisiUmum: null });
   const { error: startError } = await supabase
     .from(analisis)
-    .update(toSnake({ status: "berjalan", catatan: null, kondisiUmum: null }))
+    .update(updatePayload)
     .eq("id", analisisId);
   if (startError) {
     return NextResponse.json({ error: `Gagal menandai analisis sebagai berjalan: ${startError.message}` }, { status: 500 });
@@ -60,8 +66,10 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     model: modelAI,
     pesan: !pakaiAI
       ? "API key untuk model terpilih belum dikonfigurasi di environment lokal; sentimen ditentukan dari rating bintang."
-      : ulangi
-        ? "Analisis diproses ulang. Setiap ulasan sedang dikirim ke AI Gateway."
-        : "Analisis dimulai. Setiap ulasan sedang dikirim ke AI Gateway.",
+      : isResume
+        ? "Analisis dilanjutkan dari titik terakhir. Ulasan yang sudah selesai tidak diproses ulang."
+        : ulangi
+          ? "Analisis diproses ulang. Setiap ulasan sedang dikirim ke AI Gateway."
+          : "Analisis dimulai. Setiap ulasan sedang dikirim ke AI Gateway.",
   });
 }
