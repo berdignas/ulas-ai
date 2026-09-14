@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { type DateRange } from "react-day-picker";
 import { format } from "date-fns";
 import { ChartBar, Eye, Info, MapPin, Star, ThumbsDown, ThumbsUp } from "@phosphor-icons/react";
@@ -62,6 +62,7 @@ export default function AspekPage() {
   const [data, setData] = useState<DataAspek | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLokasi, setDetailLokasi] = useState<DetailLokasiState | null>(null);
+  const memuatReviewTambahanRef = useRef(false);
 
   useEffect(() => {
     fetch("/api/analisis")
@@ -112,6 +113,9 @@ export default function AspekPage() {
   }, [data]);
 
   const muatReviewLokasi = async (lokasi: StatistikLokasi, page = 1, append = false) => {
+    if (append && memuatReviewTambahanRef.current) return;
+    if (append) memuatReviewTambahanRef.current = true;
+
     setDetailLokasi((current) => ({
       lokasi,
       review: append && current?.lokasi.id === lokasi.id ? current.review : [],
@@ -149,6 +153,16 @@ export default function AspekPage() {
         loading: false,
         error: error instanceof Error ? error.message : "Gagal memuat review lokasi.",
       } : current);
+    } finally {
+      if (append) memuatReviewTambahanRef.current = false;
+    }
+  };
+
+  const muatBerikutnyaSaatScroll = (area: HTMLDivElement) => {
+    if (!detailLokasi?.hasMore || detailLokasi.loading || memuatReviewTambahanRef.current) return;
+    const jarakDariBawah = area.scrollHeight - area.scrollTop - area.clientHeight;
+    if (jarakDariBawah <= 320) {
+      void muatReviewLokasi(detailLokasi.lokasi, detailLokasi.page + 1, true);
     }
   };
 
@@ -267,7 +281,7 @@ export default function AspekPage() {
       )}
 
       <Dialog open={Boolean(detailLokasi)} onOpenChange={(open) => !open && setDetailLokasi(null)}>
-        <DialogContent className="max-h-[88dvh] w-[calc(100%-1.5rem)] max-w-3xl gap-0 overflow-hidden p-0 sm:rounded-2xl">
+        <DialogContent className="h-[100dvh] max-h-[88dvh] w-[calc(100%-1.5rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:rounded-2xl">
           <DialogHeader className="border-b border-border px-5 py-5 pr-14 text-left sm:px-6">
             <DialogTitle className="flex flex-wrap items-center gap-2 text-base">
               Review untuk {detailLokasi && <LokasiLabel lokasi={detailLokasi.lokasi} />}
@@ -277,7 +291,12 @@ export default function AspekPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-6" tabIndex={0}>
+          <div
+            className="min-h-0 overflow-y-auto px-4 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 sm:px-6"
+            tabIndex={0}
+            aria-label={detailLokasi ? `Daftar ${detailLokasi.total} review untuk ${detailLokasi.lokasi.nama}` : "Daftar review lokasi layanan"}
+            onScroll={(event) => muatBerikutnyaSaatScroll(event.currentTarget)}
+          >
             {detailLokasi?.loading && detailLokasi.review.length === 0 ? (
               <LoadingSection rows={3} />
             ) : detailLokasi?.error && detailLokasi.review.length === 0 ? (
