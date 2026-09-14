@@ -1,4 +1,4 @@
-import { isAIModelConfigured, resolveAIConfig } from "./ai-config";
+import { isAIModelConfigured, resolveAIConfig, type CustomAIConfig } from "./ai-config";
 import {
   ASPEK_UMUM,
   LokasiLayananReferensi,
@@ -258,8 +258,8 @@ export function aiConfiguredGemini(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
-export function aiConfigured(preferredModel?: string | null): boolean {
-  return isAIModelConfigured(preferredModel);
+export function aiConfigured(preferredModel?: string | null, customConfig?: CustomAIConfig | null): boolean {
+  return isAIModelConfigured(preferredModel, customConfig);
 }
 
 const MAX_ATTEMPTS = 3;
@@ -271,7 +271,8 @@ export async function analisisUlasanDenganAI(
   teksUlasan: string,
   rating: number | null,
   preferredModel?: string | null,
-  lokasi: LokasiLayananReferensi[] = []
+  lokasi: LokasiLayananReferensi[] = [],
+  customConfig?: CustomAIConfig | null
 ): Promise<HasilAnalisisUlasan> {
   if (!teksUlasan || teksUlasan.trim() === "") {
     const sentimen = sentimenFallbackDariRating(rating) ?? "netral";
@@ -287,9 +288,9 @@ export async function analisisUlasanDenganAI(
     };
   }
 
-  const config = resolveAIConfig(preferredModel);
-  if (!config.apiKey) {
-    throw new Error(`API key ${config.providerLabel} belum dikonfigurasi di environment server`);
+  const config = resolveAIConfig(preferredModel, customConfig);
+  if (!config.apiKey && !config.baseUrl.includes("localhost") && !config.baseUrl.includes("127.0.0.1")) {
+    throw new Error(`API key ${config.providerLabel} belum dikonfigurasi`);
   }
 
   if (config.provider === "gemini") {
@@ -351,7 +352,7 @@ export async function analisisUlasanDenganAI(
     while (jumlahPercobaan < MAX_ATTEMPTS_429) {
       jumlahPercobaan++;
       try {
-        return await callOnce(teksUlasan, rating, 90_000, config.model);
+        return await callOnce(teksUlasan, rating, 90_000, config.model, customConfig);
       } catch (error) {
         lastError = error;
         const retryable =
@@ -373,10 +374,10 @@ export async function analisisUlasanDenganAI(
       }
     }
 
-    throw lastError instanceof Error ? lastError : new Error("Pemanggilan OpenCode Zen gagal");
+    throw lastError instanceof Error ? lastError : new Error(`Pemanggilan ${config.providerLabel} gagal`);
   }
 
-  throw new Error("Tidak ada kunci AI yang terkonfigurasi (Gemini, NVIDIA, atau OpenCode Zen)");
+  throw new Error("Tidak ada kunci AI yang terkonfigurasi (Gemini, NVIDIA, atau Custom Provider)");
 }
 
 /**
@@ -388,17 +389,18 @@ export async function analisisBatchUlasanDenganAI(
   items: InputAnalisisUlasan[],
   preferredModel?: string | null,
   lokasi: LokasiLayananReferensi[] = [],
-  callbacks: AIAnalisisCallbacks = {}
+  callbacks: AIAnalisisCallbacks = {},
+  customConfig?: CustomAIConfig | null
 ): Promise<Map<number, HasilAnalisisUlasan>> {
   const hasil = new Map<number, HasilAnalisisUlasan>();
   if (items.length === 0) return hasil;
 
-  const config = resolveAIConfig(preferredModel);
+  const config = resolveAIConfig(preferredModel, customConfig);
   if (config.provider !== "gemini") {
     const entries = await Promise.all(
       items.map(async (item) => [
         item.id,
-        await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi),
+        await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi, customConfig),
       ] as const)
     );
     return new Map(entries);
@@ -553,10 +555,13 @@ async function callOnce(
   teksUlasan: string,
   rating: number | null,
   timeoutMs: number,
-  overrideModel?: string
+  overrideModel?: string,
+  customConfig?: CustomAIConfig | null
 ): Promise<HasilAnalisisUlasan> {
-  const { apiKey, baseUrl, model: defaultModel } = getEnv();
-  const model = overrideModel || defaultModel;
+  const env = getEnv();
+  const apiKey = customConfig?.apiKey || env.apiKey;
+  const baseUrl = (customConfig?.baseUrl || env.baseUrl).replace(/\/$/, "");
+  const model = overrideModel || customConfig?.model || env.model;
   await tungguGiliranNVIDIA();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -651,9 +656,9 @@ export async function buatKondisiUmum(stats: {
   totalNetral: number;
   aspekKeluhanTeratas: string[];
   aspekPujianTeratas: string[];
-}, preferredModel?: string | null): Promise<string | null> {
-  if (!aiConfigured(preferredModel)) return null;
-  const config = resolveAIConfig(preferredModel);
+}, preferredModel?: string | null, customConfig?: CustomAIConfig | null): Promise<string | null> {
+  if (!aiConfigured(preferredModel, customConfig)) return null;
+  const config = resolveAIConfig(preferredModel, customConfig);
 
   if (config.provider === "gemini") {
     try {

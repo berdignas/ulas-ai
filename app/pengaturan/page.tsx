@@ -4,7 +4,10 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import {
   Building,
   Cpu,
+  Eye,
+  EyeSlash,
   FloppyDisk,
+  Lightning,
   MapPin,
   Shield,
   SlidersHorizontal,
@@ -28,6 +31,14 @@ import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
 import { LayananEditor } from "./_components/layanan-editor";
 
+type CustomAIConfigData = {
+  providerName: string;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  maskedKey: string;
+};
+
 type RumahSakit = {
   id: number;
   nama: string;
@@ -39,6 +50,7 @@ type RumahSakit = {
   zonaWaktu: string;
   jamSinkron: number;
   aiModel?: string | null;
+  customAI?: CustomAIConfigData | null;
 };
 
 type AIModelOption = {
@@ -69,6 +81,15 @@ function PengaturanContent() {
     zonaWaktu: "Asia/Jakarta",
     jamSinkron: 6,
     aiModel: "gemini-3.5-flash-lite",
+  });
+
+  const [isCustomAI, setIsCustomAI] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [customAIForm, setCustomAIForm] = useState({
+    providerName: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    apiKey: "",
+    model: "llama-3.3-70b-versatile",
   });
 
   const [modelOptions, setModelOptions] = useState<AIModelOption[]>([]);
@@ -105,6 +126,16 @@ function PengaturanContent() {
         const rs = list.find((rs) => String(rs.id) === rsId);
         if (rs) {
           setSelectedId(rs.id);
+          const rsCustom = Boolean(rs.customAI || rs.aiModel?.startsWith("custom"));
+          setIsCustomAI(rsCustom);
+          if (rsCustom) {
+            setCustomAIForm({
+              providerName: rs.customAI?.providerName || "Custom Provider",
+              baseUrl: rs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
+              apiKey: "",
+              model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.3-70b-versatile",
+            });
+          }
           setForm({
             nama: rs.nama,
             kode: rs.kode,
@@ -124,6 +155,16 @@ function PengaturanContent() {
       } else if (list[0] && !selectedId) {
         setSelectedId(list[0].id);
         const firstRs = list[0];
+        const firstCustom = Boolean(firstRs.customAI || firstRs.aiModel?.startsWith("custom"));
+        setIsCustomAI(firstCustom);
+        if (firstCustom) {
+          setCustomAIForm({
+            providerName: firstRs.customAI?.providerName || "Custom Provider",
+            baseUrl: firstRs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
+            apiKey: "",
+            model: firstRs.customAI?.model || firstRs.aiModel?.replace(/^custom:/, "") || "llama-3.3-70b-versatile",
+          });
+        }
         setForm({
           nama: firstRs.nama,
           kode: firstRs.kode,
@@ -155,6 +196,16 @@ function PengaturanContent() {
 
   const handleSelect = (rs: RumahSakit) => {
     setSelectedId(rs.id);
+    const hasCustom = Boolean(rs.customAI || rs.aiModel?.startsWith("custom"));
+    setIsCustomAI(hasCustom);
+    if (hasCustom) {
+      setCustomAIForm({
+        providerName: rs.customAI?.providerName || "Custom Provider",
+        baseUrl: rs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
+        apiKey: "",
+        model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.3-70b-versatile",
+      });
+    }
     setForm({
       nama: rs.nama,
       kode: rs.kode,
@@ -179,6 +230,13 @@ function PengaturanContent() {
   const handleNew = () => {
     setSelectedId(null);
     setActiveSettingsTab("general");
+    setIsCustomAI(false);
+    setCustomAIForm({
+      providerName: "Groq",
+      baseUrl: "https://api.groq.com/openai/v1",
+      apiKey: "",
+      model: "llama-3.3-70b-versatile",
+    });
     setForm({
       nama: "",
       kode: "",
@@ -204,13 +262,22 @@ function PengaturanContent() {
 
   const handleSave = async () => {
     if (!form.nama || !form.kode) return alert("Nama dan kode wajib diisi");
+    if (isCustomAI && (!customAIForm.baseUrl || !customAIForm.model)) {
+      return alert("Base URL dan Nama Model wajib diisi untuk Custom Provider");
+    }
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        aiModel: isCustomAI ? `custom:${customAIForm.model}` : form.aiModel,
+        customAI: isCustomAI ? customAIForm : null,
+      };
+
       if (selectedId) {
         const res = await fetch("/api/rumah-sakit", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...form, id: selectedId }),
+          body: JSON.stringify({ ...payload, id: selectedId }),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -220,7 +287,7 @@ function PengaturanContent() {
         const res = await fetch("/api/rumah-sakit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -229,7 +296,7 @@ function PengaturanContent() {
       }
 
       if (typeof window !== "undefined") {
-        localStorage.setItem("ulas_ai_model", form.aiModel);
+        localStorage.setItem("ulas_ai_model", payload.aiModel);
         window.dispatchEvent(new Event("ulas_ai_config_updated"));
       }
 
@@ -290,17 +357,40 @@ function PengaturanContent() {
   };
 
   const handleTestAI = async () => {
-    if (!form.aiModel) {
-      setTestResult({ sukses: false, pesan: "Pilih model AI terlebih dahulu" });
-      return;
+    if (isCustomAI) {
+      if (!customAIForm.baseUrl || !customAIForm.model) {
+        setTestResult({
+          sukses: false,
+          pesan: "Base URL dan Nama Model wajib diisi untuk Custom Provider",
+        });
+        return;
+      }
+    } else {
+      if (!form.aiModel) {
+        setTestResult({ sukses: false, pesan: "Pilih model AI terlebih dahulu" });
+        return;
+      }
     }
+
     setTestingAI(true);
     setTestResult(null);
     try {
+      const payload = isCustomAI
+        ? {
+            customAI: {
+              providerName: customAIForm.providerName || "Custom Provider",
+              baseUrl: customAIForm.baseUrl,
+              apiKey: customAIForm.apiKey,
+              model: customAIForm.model,
+            },
+            rsId: selectedId,
+          }
+        : { model: form.aiModel };
+
       const res = await fetch("/api/ai/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: form.aiModel }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       setTestResult({
@@ -317,6 +407,7 @@ function PengaturanContent() {
     }
   };
 
+  const selectedRS = rumahSakitList.find((rs) => rs.id === selectedId);
   const selectedModel = modelOptions.find((model) => model.id === form.aiModel);
 
   if (loading) {
@@ -555,7 +646,7 @@ function PengaturanContent() {
               </div>
 
               {/* Row 6: Konfigurasi Model AI Gateway */}
-              <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/40 dark:bg-blue-950/20 space-y-3">
+              <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/40 dark:bg-blue-950/20 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Cpu className="size-4 text-blue-600" weight="duotone" aria-hidden="true" />
@@ -568,87 +659,304 @@ function PengaturanContent() {
                     aria-atomic="true"
                     className={cn(
                       "text-[11px] font-semibold px-2 py-0.5 rounded-full border",
-                      selectedModel?.configured
-                        ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
-                        : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                      isCustomAI
+                        ? customAIForm.baseUrl && customAIForm.model
+                          ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                          : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                        : selectedModel?.configured
+                          ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                          : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
                     )}
                   >
-                    {selectedModel?.configured ? "Siap digunakan" : "Key belum tersedia"}
+                    {isCustomAI
+                      ? customAIForm.baseUrl && customAIForm.model
+                        ? (customAIForm.apiKey.trim() || selectedRS?.customAI?.hasApiKey || customAIForm.baseUrl.includes("localhost") || customAIForm.baseUrl.includes("127.0.0.1")
+                            ? "Siap digunakan"
+                            : "API Key belum diisi")
+                        : "Konfigurasi belum lengkap"
+                      : selectedModel?.configured
+                        ? "Siap digunakan"
+                        : "Key belum tersedia"}
                   </span>
                 </div>
 
-                {/* Pilihan Cepat Provider AI */}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <span className="text-xs text-muted-foreground mr-1">Preset:</span>
+                {/* Tab Switcher: Bawaan vs Custom */}
+                <div className="flex rounded-lg border border-border/70 bg-background/80 p-1 gap-1">
                   <button
                     type="button"
-                    disabled={!modelOptions.some((model) => model.provider === "gemini" && model.configured)}
-                    onClick={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        aiModel: "gemini-3.5-flash-lite",
-                      }))
-                    }
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-                      selectedModel?.provider === "gemini"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                        : "bg-background border-border text-foreground hover:bg-muted"
-                    }`}
+                    onClick={() => setIsCustomAI(false)}
+                    className={cn(
+                      "flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all text-center cursor-pointer",
+                      !isCustomAI
+                        ? "bg-primary text-primary-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
                   >
-                    Gemini cepat
+                    Model Bawaan (Cloud)
                   </button>
                   <button
                     type="button"
-                    disabled={!modelOptions.some((model) => model.provider === "nvidia" && model.configured)}
-                    onClick={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        aiModel: modelOptions.find((model) => model.provider === "nvidia")?.id ?? form.aiModel,
-                      }))
-                    }
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-                      selectedModel?.provider === "nvidia"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                        : "bg-background border-border text-foreground hover:bg-muted"
-                    }`}
+                    onClick={() => setIsCustomAI(true)}
+                    className={cn(
+                      "flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all text-center cursor-pointer",
+                      isCustomAI
+                        ? "bg-primary text-primary-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
                   >
-                    NVIDIA terkonfigurasi
+                    Custom Provider (OpenAI Compatible)
                   </button>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 pt-1">
-                  <div className="space-y-1.5 sm:col-span-1">
-                    <Label htmlFor="aiModel" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Pilih model AI *
-                    </Label>
-                    <select
-                      id="aiModel"
-                      name="aiModel"
-                      value={form.aiModel}
-                      onChange={handleChange}
-                      disabled={saving || modelsLoading}
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {modelOptions.map((model) => (
-                        <option key={`${model.provider}:${model.id}`} value={model.id} disabled={!model.configured}>
-                          {model.label} · {model.profile}{model.configured ? "" : " (key belum tersedia)"}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                {!isCustomAI ? (
+                  /* Form Provider Bawaan */
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground mr-1">Preset:</span>
+                      <button
+                        type="button"
+                        disabled={!modelOptions.some((model) => model.provider === "gemini" && model.configured)}
+                        onClick={() =>
+                          setForm((prev) => ({
+                            ...prev,
+                            aiModel: "gemini-3.5-flash-lite",
+                          }))
+                        }
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+                          selectedModel?.provider === "gemini"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        }`}
+                      >
+                        Gemini cepat
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!modelOptions.some((model) => model.provider === "nvidia" && model.configured)}
+                        onClick={() =>
+                          setForm((prev) => ({
+                            ...prev,
+                            aiModel: modelOptions.find((model) => model.provider === "nvidia")?.id ?? form.aiModel,
+                          }))
+                        }
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+                          selectedModel?.provider === "nvidia"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        }`}
+                      >
+                        NVIDIA terkonfigurasi
+                      </button>
+                    </div>
 
-                  <div className="rounded-lg border border-border/80 bg-background/70 px-3 py-2.5 sm:col-span-1">
-                    <p className="text-xs font-semibold text-foreground">
-                      {selectedModel?.providerLabel ?? "Memuat provider…"}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {selectedModel?.description ?? "Mengambil daftar model yang tersedia dari server."}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5 sm:col-span-1">
+                        <Label htmlFor="aiModel" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Pilih model AI *
+                        </Label>
+                        <select
+                          id="aiModel"
+                          name="aiModel"
+                          value={form.aiModel}
+                          onChange={handleChange}
+                          disabled={saving || modelsLoading}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {modelOptions.map((model) => (
+                            <option key={`${model.provider}:${model.id}`} value={model.id} disabled={!model.configured}>
+                              {model.label} · {model.profile}{model.configured ? "" : " (key belum tersedia)"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="rounded-lg border border-border/80 bg-background/70 px-3 py-2.5 sm:col-span-1">
+                        <p className="text-xs font-semibold text-foreground">
+                          {selectedModel?.providerLabel ?? "Memuat provider…"}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {selectedModel?.description ?? "Mengambil daftar model yang tersedia dari server."}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Pilihan model bawaan menggunakan kredensial API key yang dikonfigurasi di server.
                     </p>
                   </div>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Pilihan disimpan per rumah sakit. API key tetap aman di environment Vercel dan tidak dikirim ke browser atau Supabase.
-                </p>
+                ) : (
+                  /* Form Custom Provider */
+                  <div className="space-y-3.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground mr-1">Preset Cepat:</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "Groq",
+                            baseUrl: "https://api.groq.com/openai/v1",
+                            model: "llama-3.3-70b-versatile",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "Groq"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Groq (Llama 3.3)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "OpenRouter",
+                            baseUrl: "https://openrouter.ai/api/v1",
+                            model: "google/gemini-2.5-flash",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "OpenRouter"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        OpenRouter
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "DeepSeek",
+                            baseUrl: "https://api.deepseek.com/v1",
+                            model: "deepseek-chat",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "DeepSeek"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        DeepSeek
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "Ollama (Lokal)",
+                            baseUrl: "http://localhost:11434/v1",
+                            model: "llama3.2",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "Ollama (Lokal)"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Ollama (Lokal)
+                      </button>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="customProviderName" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Nama Provider *
+                        </Label>
+                        <Input
+                          id="customProviderName"
+                          value={customAIForm.providerName}
+                          onChange={(e) => setCustomAIForm((p) => ({ ...p, providerName: e.target.value }))}
+                          placeholder="Contoh: Groq, OpenRouter, DeepSeek"
+                          disabled={saving}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="customModel" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Nama Model / ID *
+                        </Label>
+                        <Input
+                          id="customModel"
+                          value={customAIForm.model}
+                          onChange={(e) => setCustomAIForm((p) => ({ ...p, model: e.target.value }))}
+                          placeholder="Contoh: llama-3.3-70b-versatile"
+                          disabled={saving}
+                          className="h-9 font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="customBaseUrl" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Base URL API *
+                        </Label>
+                        <Input
+                          id="customBaseUrl"
+                          value={customAIForm.baseUrl}
+                          onChange={(e) => setCustomAIForm((p) => ({ ...p, baseUrl: e.target.value }))}
+                          placeholder="https://api.groq.com/openai/v1"
+                          disabled={saving}
+                          className="h-9 font-mono text-xs"
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          Harus mendukung endpoint OpenAI (/chat/completions)
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="customApiKey" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          API Key
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="customApiKey"
+                            type={showApiKey ? "text" : "password"}
+                            value={customAIForm.apiKey}
+                            onChange={(e) => setCustomAIForm((p) => ({ ...p, apiKey: e.target.value }))}
+                            placeholder={
+                              selectedRS?.customAI?.hasApiKey
+                                ? "•••••••• (Tersimpan - isi hanya jika ingin mengubah)"
+                                : "gsk_... / sk-or-..."
+                            }
+                            disabled={saving}
+                            className="h-9 font-mono text-xs pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            tabIndex={-1}
+                            className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                            aria-label={showApiKey ? "Sembunyikan API key" : "Tampilkan API key"}
+                          >
+                            {showApiKey ? (
+                              <EyeSlash className="size-4" weight="bold" />
+                            ) : (
+                              <Eye className="size-4" weight="bold" />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {selectedRS?.customAI?.hasApiKey
+                            ? "API Key tersimpan aman di database. Kosongkan jika tidak ingin mengubah."
+                            : "Tersimpan aman per rumah sakit di database. Kosongkan jika memakai Ollama lokal."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground">
+                      Mendukung semua LLM dengan protokol OpenAI Chat Completions (Groq, OpenRouter, DeepSeek, Together, Ollama lokal, LM Studio, dll).
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Row 7: Zona Waktu, Jam Sinkron, Toggle Otomatis Sinkron */}
@@ -722,7 +1030,14 @@ function PengaturanContent() {
                   variant="outline"
                   type="button"
                   onClick={handleTestAI}
-                  disabled={testingAI || !selectedModel?.configured || saving || testing || modelsLoading}
+                  disabled={
+                    testingAI ||
+                    saving ||
+                    testing ||
+                    (isCustomAI
+                      ? !customAIForm.baseUrl || !customAIForm.model
+                      : !selectedModel?.configured || modelsLoading)
+                  }
                   className="gap-2 h-9 px-4 text-xs border-blue-200 hover:bg-blue-50/60 dark:border-blue-800 dark:hover:bg-blue-950/30 text-blue-700 dark:text-blue-300 cursor-pointer"
                 >
                   <Cpu className="size-4 text-blue-600" weight="duotone" />

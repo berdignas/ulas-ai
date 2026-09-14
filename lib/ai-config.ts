@@ -88,6 +88,33 @@ export function getAIModelOptions(): AIModelOption[] {
   return options;
 }
 
+export interface CustomAIConfig {
+  providerName: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export function parseCustomAIConfig(raw?: string | null): CustomAIConfig | null {
+  if (!raw || typeof raw !== "string") return null;
+  try {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith("{")) return null;
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && parsed.baseUrl && parsed.model) {
+      return {
+        providerName: String(parsed.providerName || parsed.provider || "Custom AI"),
+        baseUrl: String(parsed.baseUrl).replace(/\/$/, ""),
+        apiKey: String(parsed.apiKey || ""),
+        model: String(parsed.model),
+      };
+    }
+  } catch {
+    // raw might not be a valid JSON
+  }
+  return null;
+}
+
 function normalizeLegacyModel(model?: string | null): string | null {
   const value = model?.trim();
   if (!value) return null;
@@ -100,7 +127,21 @@ function normalizeLegacyModel(model?: string | null): string | null {
   return value;
 }
 
-export function resolveAIConfig(preferredModel?: string | null): AIExecutionConfig {
+export function resolveAIConfig(
+  preferredModel?: string | null,
+  customConfig?: CustomAIConfig | null
+): AIExecutionConfig {
+  // If custom config is provided and has baseUrl & model, use it directly (OpenAI-compatible)
+  if (customConfig && customConfig.baseUrl && customConfig.model) {
+    return {
+      provider: "opencode",
+      providerLabel: customConfig.providerName || "Custom AI Provider",
+      model: customConfig.model,
+      apiKey: customConfig.apiKey || "",
+      baseUrl: customConfig.baseUrl.replace(/\/$/, ""),
+    };
+  }
+
   const options = getAIModelOptions();
   const normalized = normalizeLegacyModel(preferredModel);
   const defaultGemini = process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite";
@@ -135,6 +176,16 @@ export function resolveAIConfig(preferredModel?: string | null): AIExecutionConf
   };
 }
 
-export function isAIModelConfigured(preferredModel?: string | null): boolean {
+export function isAIModelConfigured(
+  preferredModel?: string | null,
+  customConfig?: CustomAIConfig | null
+): boolean {
+  if (customConfig && customConfig.baseUrl && customConfig.model) {
+    return (
+      customConfig.baseUrl.includes("localhost") ||
+      customConfig.baseUrl.includes("127.0.0.1") ||
+      Boolean(customConfig.apiKey)
+    );
+  }
   return Boolean(resolveAIConfig(preferredModel).apiKey);
 }

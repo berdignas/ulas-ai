@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
 import { ulasan, rumahSakit, UlasanRow } from "@/lib/db/schema";
 import { aiConfigured, analisisBatchUlasanDenganAI, getAIErrorInfo, sentimenFallbackDariRating } from "@/lib/ai";
+import { parseCustomAIConfig } from "@/lib/ai-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -34,11 +35,12 @@ export async function POST(req: Request) {
 
     // Ambil konfigurasi AI dari rumah sakit
     const { data: rsRaw } = item.rumahSakitId
-      ? await supabase.from(rumahSakit).select("ai_model").eq("id", item.rumahSakitId).limit(1)
+      ? await supabase.from(rumahSakit).select("ai_model, ai_api_key").eq("id", item.rumahSakitId).limit(1)
       : { data: null };
 
     const modelAI = rsRaw?.[0]?.ai_model ?? null;
-    const aiTersedia = aiConfigured(modelAI);
+    const customConfig = parseCustomAIConfig(rsRaw?.[0]?.ai_api_key);
+    const aiTersedia = aiConfigured(modelAI, customConfig);
 
     let sentimen: string | null = null;
     let sumberLabel: string | null = null;
@@ -55,7 +57,8 @@ export async function POST(req: Request) {
           [{ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null }],
           modelAI,
           [], // Tidak perlu daftar lokasi untuk analisis manual individual
-          {}
+          {},
+          customConfig
         );
 
         const hasil = hasilBatch.get(item.id);

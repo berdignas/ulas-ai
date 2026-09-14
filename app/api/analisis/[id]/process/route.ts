@@ -3,6 +3,7 @@ import { supabase, toCamel, toSnake } from "@/lib/db";
 import { analisis, rumahSakit, AnalisisRow } from "@/lib/db/schema";
 import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 import { aiConfigured } from "@/lib/ai";
+import { parseCustomAIConfig } from "@/lib/ai-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -22,11 +23,12 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
 
   const { data: konfigurasiRS } = await supabase
     .from(rumahSakit)
-    .select("ai_model")
+    .select("ai_model, ai_api_key")
     .eq("id", item.rumahSakitId)
     .limit(1);
   const modelAI = konfigurasiRS?.[0]?.ai_model ?? null;
-  const pakaiAI = aiConfigured(modelAI);
+  const customConfig = parseCustomAIConfig(konfigurasiRS?.[0]?.ai_api_key);
+  const pakaiAI = aiConfigured(modelAI, customConfig);
 
   if (prosesSedangBerjalan(analisisId)) {
     return NextResponse.json({ status: "berjalan", pesan: "Analisis sedang diproses." });

@@ -27,6 +27,7 @@ import {
   LokasiLayananReferensi,
   normalisasiAspekUmum,
 } from "./service-taxonomy";
+import { parseCustomAIConfig } from "./ai-config";
 
 const runningProcesses = new Set<number>();
 const stopRequests = new Set<number>();
@@ -112,10 +113,11 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     const daftarUlasan = toCamel<UlasanRow[]>(daftarUlasanRaw ?? []);
     const rumahSakitId = daftarUlasan[0]?.rumahSakitId;
     const { data: konfigurasiRSRaw } = rumahSakitId
-      ? await supabase.from(rumahSakit).select("ai_model").eq("id", rumahSakitId).limit(1)
+      ? await supabase.from(rumahSakit).select("ai_model, ai_api_key").eq("id", rumahSakitId).limit(1)
       : { data: null };
     const modelAI = konfigurasiRSRaw?.[0]?.ai_model ?? null;
-    const aiTersedia = aiConfigured(modelAI);
+    const customConfig = parseCustomAIConfig(konfigurasiRSRaw?.[0]?.ai_api_key);
+    const aiTersedia = aiConfigured(modelAI, customConfig);
     const lokasiResponse = rumahSakitId
       ? await supabase
           .from(lokasiLayananRs)
@@ -234,11 +236,12 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
               onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs }) => {
                 await supabase.from(analisis)
                   .update(toSnake({
-                    catatan: `Gemini sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
+                    catatan: `AI sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
                   }))
                   .eq("id", analisisId);
               },
-            }
+            },
+            customConfig
           );
         } catch (errorAI) {
           const info = getAIErrorInfo(errorAI);
@@ -401,7 +404,7 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
       aspekPujianTeratas,
     };
 
-    let kondisiUmum = pakaiAI ? await buatKondisiUmum(stats, modelAI) : null;
+    let kondisiUmum = pakaiAI ? await buatKondisiUmum(stats, modelAI, customConfig) : null;
     if (!kondisiUmum) kondisiUmum = kondisiUmumFallback(stats);
 
     const catatan: string[] = [];
