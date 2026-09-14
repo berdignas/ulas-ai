@@ -12,6 +12,7 @@ export async function GET(req: Request) {
   const tanggal = url.searchParams.get("tanggal");
   const status = url.searchParams.get("status");
   const rating = url.searchParams.get("rating");
+  const krisis = url.searchParams.get("krisis");
   const limit = parseInt(url.searchParams.get("limit") ?? "50");
   const offset = parseInt(url.searchParams.get("offset") ?? "0");
 
@@ -34,6 +35,10 @@ export async function GET(req: Request) {
   if (!rsRows.length) return NextResponse.json({ error: "Rumah sakit tidak ditemukan" }, { status: 404 });
 
   let query = supabase.from(ulasan).select("*", { count: "exact" }).eq("rumah_sakit_id", rsId);
+
+  if (krisis === "true" || krisis === "1") {
+    query = query.eq("faktor_urgensi_medis", true);
+  }
 
   if (tanggal) {
     const tgl = new Date(tanggal);

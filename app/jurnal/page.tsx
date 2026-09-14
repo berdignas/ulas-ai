@@ -101,6 +101,7 @@ export default function JurnalPage() {
   const [loading, setLoading] = useState(false);
   const [statistik, setStatistik] = useState<{ total: number; positif: number; negatif: number; netral: number; krisis: number; belumDitinjau: number } | null>(null);
   const [krisisCount, setKrisisCount] = useState(0);
+  const [krisisOnly, setKrisisOnly] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [lastSyncStr, setLastSyncStr] = useState<string | null>(null);
   const [lastSyncDate, setLastSyncDate] = useState<Date | null>(null);
@@ -137,6 +138,9 @@ export default function JurnalPage() {
         limit: String(PAGE_SIZE),
         offset: String(page * PAGE_SIZE),
       });
+      if (krisisOnly) {
+        params.set("krisis", "true");
+      }
       if (tanggal) params.set("tanggal", format(tanggal, "yyyy-MM-dd"));
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (ratingFilter !== "all") params.set("rating", ratingFilter);
@@ -150,7 +154,7 @@ export default function JurnalPage() {
     } finally {
       setLoading(false);
     }
-  }, [rumahSakitId, tanggal, statusFilter, ratingFilter, page]);
+  }, [rumahSakitId, tanggal, statusFilter, ratingFilter, page, krisisOnly]);
 
   const fetchStatistik = useCallback(async () => {
     if (!rumahSakitId) return;
@@ -349,6 +353,7 @@ export default function JurnalPage() {
   };
 
   const filteredUlasans = ulasans.filter((u) => {
+    if (krisisOnly && !u.faktorUrgensiMedis) return false;
     if (ratingFilter !== "all") {
       const r = getRatingDisplay(u);
       if (String(r) !== ratingFilter) return false;
@@ -516,17 +521,54 @@ export default function JurnalPage() {
 
       {/* Alert Status & Last Sync */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className={cn(
-          "flex items-center gap-2 rounded-lg px-3 py-2 border text-xs font-medium",
-          krisisCount > 0 ? "bg-rose-50 border-rose-200 text-rose-800" : "bg-emerald-50 border-emerald-200 text-emerald-800"
-        )}>
-          <Shield className="size-4 shrink-0" weight="duotone" />
-          <span>
-            {krisisCount > 0
-              ? `${krisisCount} ulasan krisis belum ditinjau`
-              : "Tidak ada ulasan krisis yang membutuhkan tindakan mendesak"}
-          </span>
-        </div>
+        {krisisCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setKrisisOnly((prev) => !prev);
+              setTanggal(null);
+              setPage(0);
+            }}
+            className={cn(
+              "group flex items-center gap-2.5 rounded-lg px-3.5 py-2 border text-xs font-medium transition-all cursor-pointer select-none",
+              krisisOnly
+                ? "bg-rose-600 border-rose-700 text-white shadow-xs hover:bg-rose-700"
+                : "bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100/80 hover:border-rose-300 active:scale-[0.99]"
+            )}
+          >
+            <span className="relative flex size-2 shrink-0">
+              <span
+                className={cn(
+                  "absolute inline-flex h-full w-full rounded-full bg-rose-500",
+                  !krisisOnly && "animate-ping opacity-75"
+                )}
+              />
+              <span className="relative inline-flex size-2 rounded-full bg-rose-500" />
+            </span>
+            <Shield className={cn("size-4 shrink-0", krisisOnly ? "text-white" : "text-rose-600")} weight="duotone" />
+            <span>
+              {krisisOnly
+                ? `Menampilkan ${krisisCount} ulasan krisis belum ditinjau`
+                : `${krisisCount} ulasan krisis belum ditinjau`}
+            </span>
+            <span
+              className={cn(
+                "ml-1.5 inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold transition-colors",
+                krisisOnly
+                  ? "bg-rose-700/80 text-white hover:bg-rose-800"
+                  : "bg-rose-200/80 text-rose-900 group-hover:bg-rose-300/80"
+              )}
+            >
+              {krisisOnly ? "Kembali ke Semua Ulasan ×" : "Lihat Ulasan Kritis →"}
+            </span>
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg px-3 py-2 border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-medium">
+            <Shield className="size-4 shrink-0 text-emerald-600" weight="duotone" />
+            <span>Tidak ada ulasan krisis yang membutuhkan tindakan mendesak</span>
+          </div>
+        )}
+
         {lastSyncStr && (
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Clock className="size-3.5" />
@@ -542,8 +584,41 @@ export default function JurnalPage() {
           <StatCard label="Positif" value={statistik.positif} icon={<CheckCircle className="size-5" weight="duotone" />} variant="success" />
           <StatCard label="Negatif" value={statistik.negatif} icon={<Flag className="size-5" weight="duotone" />} variant="danger" />
           <StatCard label="Netral" value={statistik.netral} icon={<Circle className="size-5" weight="duotone" />} variant="warning" />
-          <StatCard label="Krisis" value={statistik.krisis} icon={<Shield className="size-5" weight="duotone" />} variant="danger" />
+          <StatCard
+            label="Krisis"
+            value={statistik.krisis}
+            icon={<Shield className="size-5" weight="duotone" />}
+            variant="danger"
+            onClick={() => {
+              setKrisisOnly((prev) => !prev);
+              setTanggal(null);
+              setPage(0);
+            }}
+            active={krisisOnly}
+          />
           <StatCard label="Belum Ditinjau" value={statistik.belumDitinjau} icon={<Clock className="size-5" weight="duotone" />} variant="warning" />
+        </div>
+      )}
+
+      {/* Krisis Filter Active Banner */}
+      {krisisOnly && (
+        <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50/80 px-4 py-2.5 text-xs text-rose-900 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <Shield className="size-4 text-rose-600 shrink-0" weight="fill" />
+            <span className="font-semibold">Filter Ulasan Kritis Aktif:</span>
+            <span>Menampilkan seluruh ulasan dengan indikasi urgensi medis tanpa batasan hari.</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setKrisisOnly(false);
+              setPage(0);
+            }}
+            className="h-7 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 hover:text-rose-950"
+          >
+            Tampilkan Semua Ulasan
+          </Button>
         </div>
       )}
 
@@ -552,13 +627,17 @@ export default function JurnalPage() {
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <div>
             <CardTitle className="text-sm font-semibold">
-              Daftar Ulasan {total > 0 && `(${total})`}
+              {krisisOnly ? "Daftar Ulasan Krisis" : "Daftar Ulasan"} {total > 0 && `(${total})`}
             </CardTitle>
-            {tanggal && (
+            {krisisOnly ? (
+              <p className="text-xs text-rose-600 mt-0.5 font-medium">
+                Menampilkan ulasan kritis yang memerlukan perhatian segera (semua waktu)
+              </p>
+            ) : tanggal ? (
               <p className="text-xs text-muted-foreground mt-0.5">
                 Menampilkan ulasan untuk tanggal {format(tanggal, "dd MMMM yyyy", { locale: localeId })}
               </p>
-            )}
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             <a
@@ -852,7 +931,21 @@ export default function JurnalPage() {
   );
 }
 
-function StatCard({ label, value, icon, variant = "default" }: { label: string; value: number; icon: React.ReactNode; variant?: "default" | "success" | "warning" | "danger" }) {
+function StatCard({
+  label,
+  value,
+  icon,
+  variant = "default",
+  onClick,
+  active = false,
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  variant?: "default" | "success" | "warning" | "danger";
+  onClick?: () => void;
+  active?: boolean;
+}) {
   const variantClasses = {
     default: "border-border bg-card",
     success: "border-emerald-200 bg-emerald-50/60 dark:bg-emerald-950/20",
@@ -860,7 +953,15 @@ function StatCard({ label, value, icon, variant = "default" }: { label: string; 
     danger: "border-rose-200 bg-rose-50/60 dark:bg-rose-950/20",
   };
   return (
-    <div className={cn("rounded-xl border p-4 transition-all shadow-xs", variantClasses[variant])}>
+    <div
+      onClick={onClick}
+      className={cn(
+        "rounded-xl border p-4 transition-all shadow-xs",
+        variantClasses[variant],
+        onClick && "cursor-pointer hover:shadow-sm hover:scale-[1.01] active:scale-[0.99]",
+        active && "ring-2 ring-rose-500 border-rose-400 bg-rose-100/80 dark:bg-rose-950/40"
+      )}
+    >
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs font-medium text-muted-foreground">{label}</div>
