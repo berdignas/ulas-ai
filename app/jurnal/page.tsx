@@ -21,6 +21,7 @@ import {
   Sparkle,
   SpinnerGap,
   Star,
+  Warning,
   X,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
@@ -603,13 +604,38 @@ export default function JurnalPage() {
                   </TableRow>
                 ) : (
                   filteredUlasans.map((u) => (
-                    <TableRow key={u.id} className={cn("group transition-colors", u.faktorUrgensiMedis && "bg-rose-50/50 hover:bg-rose-50")}>
+                    <TableRow
+                      key={u.id}
+                      className={cn(
+                        "group transition-colors relative",
+                        u.faktorUrgensiMedis
+                          ? "bg-rose-50/60 hover:bg-rose-50 border-l-2 border-l-rose-500"
+                          : "border-l-2 border-l-transparent"
+                      )}
+                    >
                       <TableCell className="text-xs text-muted-foreground font-mono whitespace-nowrap">
                         {formatTanggalWaktu(u.tanggalUlasan, u)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <div className="font-semibold text-xs text-foreground truncate max-w-[140px]">{u.namaPengulas || "Pengulas Google"}</div>
-                        <div className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-[120px]">{u.reviewId}</div>
+                        <div className="font-semibold text-xs text-foreground truncate max-w-[140px]">
+                          {u.namaPengulas || "Pengulas Google"}
+                        </div>
+                        <div className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-[120px]">
+                          {u.reviewId}
+                        </div>
+                        {u.faktorUrgensiMedis && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            {/* Pulsing dot */}
+                            <span className="relative flex size-2 shrink-0">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-60" />
+                              <span className="relative inline-flex size-2 rounded-full bg-rose-500" />
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-sm bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700">
+                              <Warning className="size-2.5" weight="fill" />
+                              Kritis
+                            </span>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <div className="flex items-center gap-1 text-xs font-semibold text-amber-600">
@@ -634,6 +660,12 @@ export default function JurnalPage() {
                           {getSentimenDot(u.sentimen)}
                           <span>{u.sentimen ?? "Belum dianalisis"}</span>
                         </div>
+                        {u.faktorUrgensiMedis && (
+                          <div className="mt-0.5 flex items-center gap-1 text-[10px] font-medium text-rose-600">
+                            <Warning className="size-3 shrink-0" weight="fill" />
+                            <span>Urgensi medis</span>
+                          </div>
+                        )}
                       </TableCell>
 
                       {/* Status Column */}
@@ -748,6 +780,20 @@ export default function JurnalPage() {
 
           {selectedUlasanDetail && (
             <div className="space-y-4 pt-2">
+              {/* Crisis Alert Banner */}
+              {selectedUlasanDetail.faktorUrgensiMedis && (
+                <div className="flex items-center gap-2.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5">
+                  <span className="relative flex size-2.5 shrink-0">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-60" />
+                    <span className="relative inline-flex size-2.5 rounded-full bg-rose-500" />
+                  </span>
+                  <div>
+                    <p className="text-xs font-semibold text-rose-900">Ulasan Mengandung Urgensi Medis</p>
+                    <p className="text-[10px] text-rose-700/80 mt-0.5">Ulasan ini terindikasi mengandung keluhan serius yang memerlukan tindak lanjut segera.</p>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between text-xs border-b pb-2">
                 <div>
                   <div className="font-semibold text-xs text-foreground">{selectedUlasanDetail.namaPengulas || "Pengulas Google"}</div>
