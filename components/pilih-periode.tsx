@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formatTanggal, type AnalisisItem } from "@/lib/types";
+import { analisisMemilikiHasil, formatTanggal, hitungSisaUlasan, type AnalisisItem } from "@/lib/types";
 
 interface PropsSelect {
   daftar: AnalisisItem[];
@@ -20,7 +20,7 @@ interface PropsSelect {
 }
 
 export function PilihPeriode({ daftar, dipilih, onChange, hanyaSelesai = true }: PropsSelect) {
-  const opsi = hanyaSelesai ? daftar.filter((a) => a.status === "selesai") : daftar;
+  const opsi = hanyaSelesai ? daftar.filter(analisisMemilikiHasil) : daftar;
 
   if (opsi.length === 0) {
     return (
@@ -43,7 +43,8 @@ export function PilihPeriode({ daftar, dipilih, onChange, hanyaSelesai = true }:
       <SelectContent align="end">
         {opsi.map((item) => (
           <SelectItem key={item.id} value={String(item.id)}>
-            {formatTanggal(item.tanggalUnggah)} · {item.namaFile} ({item.totalUlasan} ulasan)
+            {formatTanggal(item.tanggalUnggah)} · {item.namaFile} ({item.ulasanDiproses} dianalisis
+            {hitungSisaUlasan(item) > 0 ? `, ${hitungSisaUlasan(item)} tersisa` : ""})
           </SelectItem>
         ))}
       </SelectContent>

@@ -38,6 +38,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     // Hanya status selesai yang boleh ditampilkan 100%. Status gagal tetap memakai
     // checkpoint agar UI tidak mengklaim seluruh ulasan sudah diproses.
     ulasanDiproses: item.status === "selesai" ? item.totalUlasan : item.ulasanDiproses,
+    sisaUlasan: item.status === "selesai" ? 0 : Math.max(0, item.totalUlasan - item.ulasanDiproses),
     catatan: item.catatan,
   });
 }

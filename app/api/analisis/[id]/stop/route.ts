@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel } from "@/lib/db";
 import { analisis, AnalisisRow } from "@/lib/db/schema";
-import { hentikanProsesAnalisis } from "@/lib/analyzer";
+import { finalisasiAnalisisDihentikan, hentikanProsesAnalisis } from "@/lib/analyzer";
 import { toSnake } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -26,7 +26,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   // Simpan sinyal stop agar dapat dibaca worker di instance lain setelah deploy.
   const { error } = await supabase
     .from(analisis)
-    .update(toSnake({ status: "berhenti", catatan: "Permintaan berhenti diterima. Menunggu batch aktif selesai." }))
+    .update(toSnake({ status: "berhenti", catatan: "Mengakhiri analisis dan menyiapkan hasil parsial." }))
     .eq("id", analisisId)
     .eq("status", "berjalan");
   if (error) {
@@ -34,8 +34,29 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   }
 
   hentikanProsesAnalisis(analisisId);
-  return NextResponse.json({
-    status: "berhenti",
-    pesan: "Permintaan berhenti dikirim. Analisis akan berhenti setelah ulasan yang sedang diproses selesai.",
-  });
+  try {
+    const hasil = await finalisasiAnalisisDihentikan(
+      analisisId,
+      item.totalUlasan,
+      "Analisis dihentikan oleh pengguna"
+    );
+    return NextResponse.json({
+      status: hasil.status,
+      totalUlasan: item.totalUlasan,
+      ulasanDiproses: hasil.ulasanDiproses,
+      sisaUlasan: hasil.sisaUlasan,
+      pesan: hasil.sisaUlasan > 0
+        ? `Analisis dihentikan. ${hasil.ulasanDiproses} hasil tersedia dan ${hasil.sisaUlasan} ulasan masih dapat dianalisis.`
+        : "Analisis dihentikan setelah seluruh ulasan selesai diproses.",
+    });
+  } catch (finalisasiError) {
+    console.error("[ai] gagal menyiapkan ringkasan parsial:", finalisasiError);
+    return NextResponse.json({
+      status: "berhenti",
+      totalUlasan: item.totalUlasan,
+      ulasanDiproses: item.ulasanDiproses,
+      sisaUlasan: Math.max(0, item.totalUlasan - item.ulasanDiproses),
+      pesan: "Analisis dihentikan. Muat ulang dashboard untuk melihat hasil parsial terbaru.",
+    });
+  }
 }

@@ -71,6 +71,19 @@ export interface ParsedPreview {
   tanggalUlasan: string | null;
 }
 
+export function hitungSisaUlasan(
+  item: Pick<AnalisisItem, "totalUlasan" | "ulasanDiproses">
+): number {
+  return Math.max(0, item.totalUlasan - item.ulasanDiproses);
+}
+
+export function analisisMemilikiHasil(
+  item: Pick<AnalisisItem, "status" | "ulasanDiproses" | "totalPositif" | "totalNegatif" | "totalNetral">
+): boolean {
+  const totalHasil = item.totalPositif + item.totalNegatif + item.totalNetral;
+  return item.status === "selesai" || (item.ulasanDiproses > 0 && totalHasil > 0);
+}
+
 export function formatTanggal(iso: string | null): string {
   if (!iso) return "-";
   const tanggal = new Date(iso);

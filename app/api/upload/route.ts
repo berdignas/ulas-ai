@@ -114,6 +114,7 @@ export async function POST(req: Request) {
       namaFileLama: sudahAda.namaFile,
       status: sudahAda.status,
       totalUlasan: sudahAda.totalUlasan,
+      ulasanDiproses: sudahAda.ulasanDiproses,
     });
   }
 

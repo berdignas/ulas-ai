@@ -38,6 +38,7 @@ interface HasilUpload {
   totalUlasan: number;
   kolomTerdeteksi: { nama: string | null; rating: string | null; teks: string | null; tanggal: string | null };
   pratinjau: ParsedPreview[];
+  ulasanDiproses?: number;
   sudahAda?: boolean;
   namaFileLama?: string;
   status?: string;
@@ -46,6 +47,11 @@ interface HasilUpload {
 interface ApiResponse {
   error?: string;
   message?: string;
+  pesan?: string;
+  status?: "berjalan" | "selesai" | "berhenti";
+  totalUlasan?: number;
+  ulasanDiproses?: number;
+  sisaUlasan?: number;
 }
 
 export default function UnggahPage() {
@@ -214,7 +220,19 @@ function UnggahInner() {
     if (idAktif === null || berhentiJalan) return;
     setBerhentiJalan(true);
     try {
-      await fetch(`/api/analisis/${idAktif}/stop`, { method: "POST" });
+      const res = await fetch(`/api/analisis/${idAktif}/stop`, { method: "POST" });
+      const data = (await res.json()) as ApiResponse;
+      if (!res.ok) {
+        throw new Error(data.error ?? data.pesan ?? data.message ?? "Gagal menghentikan analisis.");
+      }
+      berhentiPolling();
+      setProgres({
+        diproses: data.ulasanDiproses ?? progres.diproses,
+        total: data.totalUlasan ?? progres.total,
+      });
+      try { localStorage.removeItem(`analisis-timer-${idAktif}`); } catch {}
+      setTahap(data.status === "selesai" ? "selesai" : "berhenti");
+      setBerhentiJalan(false);
     } catch (err) {
       setBerhentiJalan(false);
       setError(err instanceof Error ? err.message : "Gagal terhubung ke server.");
@@ -222,7 +240,8 @@ function UnggahInner() {
   };
 
   const mulaiAnalisis = async () => {
-    if (!hasil) return;
+    const targetId = hasil?.id ?? idAktif;
+    if (targetId === null) return;
     setError(null);
     setBerhentiJalan(false);
     elapsedDetikRef.current = 0;
@@ -232,7 +251,7 @@ function UnggahInner() {
       Notification.requestPermission().catch(() => undefined);
     }
     try {
-      const res = await fetch(`/api/analisis/${hasil.id}/process`, { method: "POST" });
+      const res = await fetch(`/api/analisis/${targetId}/process`, { method: "POST" });
       let data: ApiResponse | null = null;
       try {
         data = await res.json();
@@ -240,15 +259,18 @@ function UnggahInner() {
         // Non-JSON response
       }
       if (!res.ok) {
-        setError(data?.error ?? data?.message ?? "Gagal memulai analisis.");
+        setError(data?.error ?? data?.pesan ?? data?.message ?? "Gagal memulai analisis.");
         return;
       }
-      setProgres({ diproses: 0, total: hasil.totalUlasan });
+      setProgres({
+        diproses: data?.ulasanDiproses ?? 0,
+        total: data?.totalUlasan ?? hasil?.totalUlasan ?? progres.total,
+      });
       setTahap("berjalan");
       try {
-        localStorage.setItem(`analisis-timer-${hasil.id}`, String(Date.now()));
+        localStorage.setItem(`analisis-timer-${targetId}`, String(Date.now()));
       } catch {}
-      pantauStatus(hasil.id);
+      pantauStatus(targetId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal terhubung ke server.");
     }
@@ -417,17 +439,17 @@ function UnggahInner() {
           <StopCircle className="size-9 text-amber-600" weight="duotone" />
           <h3 className="mt-4 text-lg font-semibold tracking-tight text-amber-950">Analisis dihentikan</h3>
           <p className="mt-1.5 max-w-md text-sm leading-relaxed text-amber-900/80">
-            Proses dihentikan setelah {progres.diproses} dari {progres.total} ulasan diproses. Hasil yang sudah
-            diproses tetap tersimpan dan dapat dilanjutkan kapan saja.
+            Hasil dari <span className="font-semibold text-amber-950">{progres.diproses} ulasan</span> sudah tersedia
+            di aplikasi. Masih ada <span className="font-semibold text-amber-950">{Math.max(0, progres.total - progres.diproses)} ulasan</span> yang belum dianalisis.
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-            {hasil && (
+            {Math.max(0, progres.total - progres.diproses) > 0 && (
               <Button onClick={mulaiAnalisis}>
                 <ArrowsClockwise className="size-4" />
-                Proses Lagi
+                Analisis {Math.max(0, progres.total - progres.diproses)} Ulasan Tersisa
               </Button>
             )}
-            <Button variant={hasil ? "outline" : "default"} render={<Link href="/" />}>
+            <Button variant="outline" nativeButton={false} render={<Link href="/" />}>
               Buka Dashboard
               <ArrowRight className="size-4" />
             </Button>
@@ -451,7 +473,7 @@ function UnggahInner() {
             ) : "."}
           </p>
           <div className="mt-6 flex gap-2">
-            <Button render={<Link href="/" />}>
+            <Button nativeButton={false} render={<Link href="/" />}>
               Buka Dashboard
               <ArrowRight className="size-4" />
             </Button>
@@ -482,11 +504,11 @@ function UnggahInner() {
             {hasil.status === "berjalan"
               ? " yang sedang diproses. Tidak perlu analisis ulang."
               : hasil.status === "berhenti"
-                ? " yang prosesnya dihentikan sebelum selesai. Lanjutkan dari dashboard atau halaman unggah."
+                ? ` dengan ${hasil.ulasanDiproses ?? 0} hasil tersedia dan ${Math.max(0, hasil.totalUlasan - (hasil.ulasanDiproses ?? 0))} ulasan tersisa.`
                 : " yang sudah selesai dianalisis. Hasil dipakai kembali tanpa analisis ulang."}
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <Button size="lg" render={<Link href="/" />}>
+            <Button size="lg" nativeButton={false} render={<Link href="/" />}>
               Lihat Hasil Analisis
               <ArrowRight className="size-4" />
             </Button>

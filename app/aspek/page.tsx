@@ -26,7 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { formatTanggal, type StatistikAspek, type StatistikLokasi, type UlasanLokasiItem } from "@/lib/types";
+import { analisisMemilikiHasil, formatTanggal, type AnalisisItem, type StatistikAspek, type StatistikLokasi, type UlasanLokasiItem } from "@/lib/types";
 
 interface DataAspek {
   aspek: StatistikAspek[];
@@ -66,11 +66,11 @@ export default function AspekPage() {
   useEffect(() => {
     fetch("/api/analisis")
       .then((res) => res.json())
-      .then((result: { analisis?: Array<{ id: number; status: string }> }) => {
+      .then((result: { analisis?: AnalisisItem[] }) => {
         const list = Array.isArray(result.analisis) ? result.analisis : [];
-        const selesai = list.find((item) => item.status === "selesai");
-        setAnalisisId(selesai?.id ?? null);
-        if (!selesai) setLoading(false);
+        const tersedia = list.find(analisisMemilikiHasil);
+        setAnalisisId(tersedia?.id ?? null);
+        if (!tersedia) setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);

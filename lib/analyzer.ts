@@ -8,7 +8,6 @@ import {
   rumahSakit,
   ulasan,
   UlasanRow,
-  AnalisisRow,
   AspekRow,
   LokasiLayananRsRow,
 } from "./db/schema";
@@ -71,11 +70,11 @@ export async function hapusAspekYatim(): Promise<void> {
   }
 }
 
-export function mulaiProsesAnalisis(analisisId: number, isResume = false): Promise<void> | null {
+export function mulaiProsesAnalisis(analisisId: number, hanyaSisa = false): Promise<void> | null {
   if (runningProcesses.has(analisisId)) return null;
   runningProcesses.add(analisisId);
   stopRequests.delete(analisisId);
-  return prosesAnalisis(analisisId, isResume).finally(() => {
+  return prosesAnalisis(analisisId, hanyaSisa).finally(() => {
     runningProcesses.delete(analisisId);
     stopRequests.delete(analisisId);
   });
@@ -103,7 +102,97 @@ function buatBatchAdaptif(items: UlasanRow[]): UlasanRow[][] {
   return batches;
 }
 
-async function prosesAnalisis(analisisId: number, isResume = false): Promise<void> {
+interface RingkasanAnalisis {
+  ulasanDiproses: number;
+  totalPositif: number;
+  totalNegatif: number;
+  totalNetral: number;
+  aspekKeluhanTeratas: string[];
+  aspekPujianTeratas: string[];
+}
+
+async function hitungRingkasanAnalisis(analisisId: number): Promise<RingkasanAnalisis> {
+  const [positifResponse, negatifResponse, netralResponse, aspekStatistik] = await Promise.all([
+    supabase.from(ulasan)
+      .select("*", { count: "exact", head: true })
+      .eq("analisis_id", analisisId)
+      .eq("sentimen", "positif"),
+    supabase.from(ulasan)
+      .select("*", { count: "exact", head: true })
+      .eq("analisis_id", analisisId)
+      .eq("sentimen", "negatif"),
+    supabase.from(ulasan)
+      .select("*", { count: "exact", head: true })
+      .eq("analisis_id", analisisId)
+      .eq("sentimen", "netral"),
+    dapatkanStatistikAspek(analisisId),
+  ]);
+
+  const errorHitung = positifResponse.error ?? negatifResponse.error ?? netralResponse.error;
+  if (errorHitung) {
+    throw new Error(`Gagal menghitung hasil analisis: ${errorHitung.message}`);
+  }
+
+  const totalPositif = positifResponse.count ?? 0;
+  const totalNegatif = negatifResponse.count ?? 0;
+  const totalNetral = netralResponse.count ?? 0;
+
+  return {
+    ulasanDiproses: totalPositif + totalNegatif + totalNetral,
+    totalPositif,
+    totalNegatif,
+    totalNetral,
+    aspekKeluhanTeratas: aspekStatistik
+      .filter((item) => item.negatif > 0)
+      .sort((a, b) => b.negatif - a.negatif)
+      .slice(0, 3)
+      .map((item) => item.namaAspek),
+    aspekPujianTeratas: aspekStatistik
+      .filter((item) => item.positif > 0)
+      .sort((a, b) => b.positif - a.positif)
+      .slice(0, 3)
+      .map((item) => item.namaAspek),
+  };
+}
+
+export async function finalisasiAnalisisDihentikan(
+  analisisId: number,
+  totalUlasan: number,
+  alasan: string
+): Promise<RingkasanAnalisis & { status: "selesai" | "berhenti"; sisaUlasan: number }> {
+  const ringkasan = await hitungRingkasanAnalisis(analisisId);
+  const sisaUlasan = Math.max(0, totalUlasan - ringkasan.ulasanDiproses);
+  const status = sisaUlasan === 0 ? "selesai" : "berhenti";
+  const stats = {
+    totalUlasan: ringkasan.ulasanDiproses,
+    totalPositif: ringkasan.totalPositif,
+    totalNegatif: ringkasan.totalNegatif,
+    totalNetral: ringkasan.totalNetral,
+    aspekKeluhanTeratas: ringkasan.aspekKeluhanTeratas,
+    aspekPujianTeratas: ringkasan.aspekPujianTeratas,
+  };
+  const alasanBersih = alasan.trim().replace(/[.\s]+$/, "");
+  const catatan = status === "selesai"
+    ? `${alasanBersih}. Seluruh ${totalUlasan} ulasan sudah berhasil dianalisis.`
+    : `${alasanBersih}. ${ringkasan.ulasanDiproses} ulasan berhasil dianalisis dan hasilnya sudah tersedia. Masih ada ${sisaUlasan} ulasan yang belum dianalisis.`;
+
+  const { error } = await supabase.from(analisis)
+    .update(toSnake({
+      status,
+      ulasanDiproses: ringkasan.ulasanDiproses,
+      totalPositif: ringkasan.totalPositif,
+      totalNegatif: ringkasan.totalNegatif,
+      totalNetral: ringkasan.totalNetral,
+      kondisiUmum: kondisiUmumFallback(stats),
+      catatan,
+    }))
+    .eq("id", analisisId);
+  if (error) throw new Error(`Gagal menyimpan hasil parsial: ${error.message}`);
+
+  return { ...ringkasan, status, sisaUlasan };
+}
+
+async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<void> {
   const mulaiWaktuMs = Date.now();
   try {
     // Hanya update status ke "berjalan" tanpa menghapus catatan/kondisiUmum.
@@ -133,15 +222,15 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
     const schemaV3Tersedia = !lokasiResponse.error;
     const daftarLokasi = toCamel<LokasiLayananRsRow[]>(lokasiResponse.data ?? []);
 
-    // Saat RESUME: hanya proses ulasan yang benar-benar belum punya label sama sekali
+    // Saat memproses SISA: hanya proses ulasan yang benar-benar belum punya label sama sekali
     // (sumberLabel = null). Ulasan yang sudah berlabel "ai" maupun "rating" dianggap
     // selesai dan tidak akan di-reset — ini mencegah progress bar mundur.
     //
     // Saat RESTART PENUH: proses semua ulasan dari nol (termasuk yang sudah berlabel).
-    const belumDiproses = isResume
+    const belumDiproses = hanyaSisa
       ? daftarUlasan.filter((u) => !u.sumberLabel)                // hanya yang belum berlabel
       : daftarUlasan.filter((u) => u.sumberLabel !== "ai");        // non-ai (restart perilaku lama)
-    const sudahDiproses = isResume
+    const sudahDiproses = hanyaSisa
       ? daftarUlasan.filter((u) => !!u.sumberLabel)                // semua yang sudah berlabel (ai + rating)
       : daftarUlasan.filter((u) => u.sumberLabel === "ai");        // hanya ai
 
@@ -178,6 +267,7 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
     let pakaiAI = sudahDiproses.some((item) => item.sumberLabel === "ai");
     let tertundaKarenaAI: ReturnType<typeof getAIErrorInfo> | null = null;
     let errorAITerakhir: ReturnType<typeof getAIErrorInfo> | null = null;
+    let terhentiTanpaKemajuan: string | null = null;
     const cacheAspek = new Map<string, number>();
     const { data: daftarAspekRaw } = await supabase.from(aspek).select("*");
     for (const itemAspek of toCamel<AspekRow[]>(daftarAspekRaw ?? [])) {
@@ -220,7 +310,7 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
         aiErrorMessage: hasil ? null : errorAI?.message ?? null,
         aiDiprosesPada: hasil ? new Date().toISOString() : null,
       } : {};
-      return supabase.from(ulasan)
+      const { error } = await supabase.from(ulasan)
         .update(toSnake({
           sentimen,
           sumberLabel,
@@ -232,6 +322,8 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
           diperbaruiPada: new Date().toISOString(),
         }))
         .eq("id", item.id);
+      if (error) throw new Error(`Gagal menyimpan hasil ulasan ${item.id}: ${error.message}`);
+      return sumberLabel !== null;
     };
 
     const batches = buatBatchAdaptif(belumDiproses);
@@ -250,11 +342,15 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
             daftarLokasi,
             {
               onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs }) => {
+                if (await adaPermintaanBerhenti(analisisId)) {
+                  throw new Error("Analisis dihentikan oleh pengguna.");
+                }
                 await supabase.from(analisis)
                   .update(toSnake({
                     catatan: `AI sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
                   }))
-                  .eq("id", analisisId);
+                  .eq("id", analisisId)
+                  .eq("status", "berjalan");
               },
             },
             customConfig
@@ -281,6 +377,10 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
           errorPermanenBatch = info;
         }
       }
+
+      // Bila pengguna menghentikan analisis saat request AI aktif, abaikan hasil
+      // batch tersebut agar checkpoint tetap konsisten dengan data yang tampil.
+      if (await adaPermintaanBerhenti(analisisId)) break;
 
       const relasiAspek: Array<{
         ulasanId: number;
@@ -333,7 +433,7 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
         }
       }
 
-      await Promise.all(batch.map((item) => simpanSatuUlasan(
+      const hasilSimpan = await Promise.all(batch.map((item) => simpanSatuUlasan(
         item,
         hasilBatch.get(item.id) ?? null,
         errorPermanenBatch
@@ -347,10 +447,20 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
         });
       }
 
-      ulasanDiprosesCounter += batch.length;
+      // Progress hanya bertambah untuk ulasan yang benar-benar memperoleh label.
+      // Ulasan gagal tetap menjadi sisa dan akan dicoba pada proses berikutnya.
+      const jumlahBerhasil = hasilSimpan.filter(Boolean).length;
+      ulasanDiprosesCounter += jumlahBerhasil;
       await supabase.from(analisis)
         .update(toSnake({ ulasanDiproses: ulasanDiprosesCounter, catatan: null }))
-        .eq("id", analisisId);
+        .eq("id", analisisId)
+        .eq("status", "berjalan");
+      if (jumlahBerhasil === 0 && batch.length > 0) {
+        terhentiTanpaKemajuan = errorPermanenBatch
+          ? `AI tidak dapat menghasilkan label baru (${errorPermanenBatch.code}: ${errorPermanenBatch.message})`
+          : "batch terakhir tidak menghasilkan label baru";
+        break;
+      }
       console.info(
         `[ai] analisis ${analisisId}, batch ${batchIndex + 1}/${batches.length}: ${batch.length} ulasan dalam ${Date.now() - mulaiBatch}ms`
       );
@@ -358,67 +468,52 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
 
     if (tertundaKarenaAI) {
       const namaProvider = customConfig?.providerName || (modelAI?.startsWith("gemini") ? "Gemini" : modelAI || "AI Provider");
-      await supabase.from(analisis)
-        .update(toSnake({
-          status: "berhenti",
-          catatan: `Analisis AI dijeda sementara agar sisa ulasan tidak terisi rating (${tertundaKarenaAI.code}: ${tertundaKarenaAI.message}). Ulasan yang sudah selesai (${ulasanDiprosesCounter} ulasan) tersimpan aman. Tunggu sekitar 1 menit agar kuota ${namaProvider} pulih, lalu klik tombol 'Proses ulang' untuk melanjutkan.`,
-        }))
-        .eq("id", analisisId);
+      await finalisasiAnalisisDihentikan(
+        analisisId,
+        daftarUlasan.length,
+        `Analisis dihentikan otomatis karena ${namaProvider} belum dapat melanjutkan permintaan (${tertundaKarenaAI.code}: ${tertundaKarenaAI.message})`
+      );
+      return;
+    }
+
+    if (terhentiTanpaKemajuan) {
+      await finalisasiAnalisisDihentikan(
+        analisisId,
+        daftarUlasan.length,
+        `Analisis dihentikan karena ${terhentiTanpaKemajuan}`
+      );
       return;
     }
 
     if (await adaPermintaanBerhenti(analisisId)) {
-      const { data: terkiniRaw } = await supabase.from(analisis).select("*").eq("id", analisisId).limit(1);
-      const terkini = toCamel<AnalisisRow>(terkiniRaw?.[0]);
-      await supabase.from(analisis)
-        .update(toSnake({
-          status: "berhenti",
-          catatan: `Analisis dihentikan setelah ${terkini?.ulasanDiproses ?? 0} dari ${daftarUlasan.length} ulasan diproses. Proses ulang untuk melanjutkan.`,
-        }))
-        .eq("id", analisisId);
+      await finalisasiAnalisisDihentikan(
+        analisisId,
+        daftarUlasan.length,
+        "Analisis dihentikan oleh pengguna"
+      );
       return;
     }
 
     const totalUlasan = daftarUlasan.length;
+    const ringkasan = await hitungRingkasanAnalisis(analisisId);
+    const sisaUlasan = Math.max(0, totalUlasan - ringkasan.ulasanDiproses);
 
-    const { count: jumlahPositif } = await supabase.from(ulasan)
-      .select("*", { count: "exact", head: true })
-      .eq("analisis_id", analisisId)
-      .eq("sentimen", "positif");
-
-    const { count: jumlahNegatif } = await supabase.from(ulasan)
-      .select("*", { count: "exact", head: true })
-      .eq("analisis_id", analisisId)
-      .eq("sentimen", "negatif");
-
-    const { count: jumlahNetral } = await supabase.from(ulasan)
-      .select("*", { count: "exact", head: true })
-      .eq("analisis_id", analisisId)
-      .eq("sentimen", "netral");
-
-    const posCount = jumlahPositif ?? 0;
-    const negCount = jumlahNegatif ?? 0;
-    const netCount = jumlahNetral ?? 0;
-
-    const aspekStatistik = await dapatkanStatistikAspek(analisisId);
-    const aspekKeluhanTeratas = aspekStatistik
-      .filter((a) => a.negatif > 0)
-      .sort((a, b) => b.negatif - a.negatif)
-      .slice(0, 3)
-      .map((a) => a.namaAspek);
-    const aspekPujianTeratas = aspekStatistik
-      .filter((a) => a.positif > 0)
-      .sort((a, b) => b.positif - a.positif)
-      .slice(0, 3)
-      .map((a) => a.namaAspek);
+    if (sisaUlasan > 0) {
+      await finalisasiAnalisisDihentikan(
+        analisisId,
+        totalUlasan,
+        "Analisis dihentikan karena sebagian ulasan belum berhasil memperoleh label"
+      );
+      return;
+    }
 
     const stats = {
-      totalUlasan,
-      totalPositif: posCount,
-      totalNegatif: negCount,
-      totalNetral: netCount,
-      aspekKeluhanTeratas,
-      aspekPujianTeratas,
+      totalUlasan: ringkasan.ulasanDiproses,
+      totalPositif: ringkasan.totalPositif,
+      totalNegatif: ringkasan.totalNegatif,
+      totalNetral: ringkasan.totalNetral,
+      aspekKeluhanTeratas: ringkasan.aspekKeluhanTeratas,
+      aspekPujianTeratas: ringkasan.aspekPujianTeratas,
     };
 
     let kondisiUmum = pakaiAI ? await buatKondisiUmum(stats, modelAI, customConfig) : null;
@@ -444,9 +539,10 @@ async function prosesAnalisis(analisisId: number, isResume = false): Promise<voi
       .update(toSnake({
         status: "selesai",
         totalUlasan,
-        totalPositif: posCount,
-        totalNegatif: negCount,
-        totalNetral: netCount,
+        ulasanDiproses: ringkasan.ulasanDiproses,
+        totalPositif: ringkasan.totalPositif,
+        totalNegatif: ringkasan.totalNegatif,
+        totalNetral: ringkasan.totalNetral,
         kondisiUmum,
         catatan: catatan.join(" "),
       }))

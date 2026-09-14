@@ -55,6 +55,8 @@ import {
   formatDurasi,
   ekstraksiDurasiDariCatatan,
   bersihkanCatatanPeringatan,
+  analisisMemilikiHasil,
+  hitungSisaUlasan,
   type AnalisisItem,
 } from "@/lib/types";
 
@@ -122,8 +124,9 @@ export default function DashboardPage() {
         const list = Array.isArray(data?.analisis) ? data.analisis : [];
         setDaftar(list);
         const berjalan = list.find((a) => a.status === "berjalan");
+        const terbaruDenganHasil = list.find(analisisMemilikiHasil);
         const selesai = list.filter((a) => a.status === "selesai");
-        setDipilih(berjalan?.id ?? selesai[0]?.id ?? list[0]?.id ?? null);
+        setDipilih(berjalan?.id ?? terbaruDenganHasil?.id ?? list[0]?.id ?? null);
         if (selesai.length >= 2) {
           setPeriodeA(selesai[1].id);
           setPeriodeB(selesai[0].id);
@@ -246,21 +249,36 @@ export default function DashboardPage() {
     setPesanProsesUlang(null);
     try {
       const res = await fetch(`/api/analisis/${dipilih}/process`, { method: "POST" });
-      const data = (await res.json()) as { pakaiAI?: boolean; pesan?: string };
-      if (res.ok && data.pakaiAI === false) {
+      const data = (await res.json()) as {
+        pakaiAI?: boolean;
+        pesan?: string;
+        error?: string;
+        sisaUlasan?: number;
+      };
+      if (!res.ok) {
+        setPesanProsesUlang(data.error ?? data.pesan ?? "Tidak dapat memulai analisis.");
+        tambahLog("Gagal memulai proses analisis.", "error");
+        return;
+      }
+      if (data.pakaiAI === false) {
         setPesanProsesUlang(data.pesan ?? "Kunci API AI belum diatur.");
         tambahLog("Analisis dimulai tanpa AI — sentimen ditentukan dari rating bintang.", "peringatan");
       } else {
-        try {
-          localStorage.setItem(`analisis-timer-${dipilih}`, String(Date.now()));
-        } catch {}
-        setNotifSelesai(null);
-        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-          Notification.requestPermission().catch(() => undefined);
-        }
-        tambahLog("Memulai proses analisis AI...", "info");
-        await muatDaftar();
+        tambahLog(
+          data.sisaUlasan !== undefined
+            ? `Memulai analisis untuk ${data.sisaUlasan} ulasan tersisa.`
+            : "Memulai proses analisis AI...",
+          "info"
+        );
       }
+      try {
+        localStorage.setItem(`analisis-timer-${dipilih}`, String(Date.now()));
+      } catch {}
+      setNotifSelesai(null);
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => undefined);
+      }
+      await muatDaftar();
     } catch {
       setPesanProsesUlang("Tidak dapat memulai proses ulang. Coba lagi.");
       tambahLog("Gagal memulai proses analisis. Periksa koneksi.", "error");
@@ -276,19 +294,23 @@ export default function DashboardPage() {
   const hentikanAnalisis = useCallback(async () => {
     if (dipilih === null || hentikanJalan) return;
     setHentikanJalan(true);
+    setPesanAksi(null);
     try {
       const res = await fetch(`/api/analisis/${dipilih}/stop`, { method: "POST" });
+      const data = (await res.json()) as { pesan?: string; error?: string };
       if (res.ok) {
         await muatDaftar().catch(() => undefined);
+        const pesan = data.pesan ?? "Analisis dihentikan dan hasil parsial sudah tersedia.";
+        tambahLog(pesan, "peringatan");
       } else {
-        setPesanAksi("Tidak ada proses analisis yang sedang berjalan.");
+        setPesanAksi(data.error ?? "Tidak ada proses analisis yang sedang berjalan.");
       }
     } catch {
       setPesanAksi("Gagal menghentikan analisis. Coba lagi.");
     } finally {
       setHentikanJalan(false);
     }
-  }, [dipilih, hentikanJalan, muatDaftar]);
+  }, [dipilih, hentikanJalan, muatDaftar, tambahLog]);
 
   useEffect(() => {
     if (!konfirmasi) return;
@@ -362,6 +384,9 @@ export default function DashboardPage() {
 
   const aktif = useMemo(() => (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih) ?? null, [daftar, dipilih]);
   const totalTerlabel = aktif ? aktif.totalPositif + aktif.totalNegatif + aktif.totalNetral : 0;
+  const sisaUlasan = aktif ? hitungSisaUlasan(aktif) : 0;
+  const hasilTersedia = aktif ? analisisMemilikiHasil(aktif) : false;
+  const hasilParsial = aktif ? aktif.status !== "selesai" : false;
   const catatanPeringatan = useMemo(() => bersihkanCatatanPeringatan(aktif?.catatan), [aktif?.catatan]);
   const durasiTercatat = useMemo(() => ekstraksiDurasiDariCatatan(aktif?.catatan), [aktif?.catatan]);
 
@@ -453,7 +478,7 @@ export default function DashboardPage() {
           title="Belum ada data ulasan"
           description="Gunakan tombol Tarik Data di kanan atas atau unggah file ulasan CSV/Excel."
           action={
-            <Button size="lg" render={<Link href="/unggah" />}>
+            <Button size="lg" nativeButton={false} render={<Link href="/unggah" />}>
               Unggah Data Ulasan
               <ArrowRight className="size-4" />
             </Button>
@@ -618,17 +643,24 @@ export default function DashboardPage() {
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-amber-900">Analisis dihentikan</p>
                   {aktif.catatan && <p className="mt-1 text-sm text-amber-800/80 leading-relaxed">{aktif.catatan}</p>}
+                  {aktif.ulasanDiproses > 0 && (
+                    <p className="mt-2 text-xs font-medium text-amber-950">
+                      Hasil dari {aktif.ulasanDiproses} ulasan langsung ditampilkan di bawah.
+                    </p>
+                  )}
                 </div>
                 <Badge variant="warning" className="shrink-0">Dihentikan</Badge>
               </div>
-              <Button size="sm" variant="outline" onClick={prosesUlangDenganAI} disabled={prosesUlangJalan} className="gap-2">
-                {prosesUlangJalan ? (
-                  <SpinnerGap className="size-3.5 animate-spin" weight="duotone" />
-                ) : (
-                  <ArrowsClockwise className="size-3.5" weight="duotone" />
-                )}
-                Proses ulang dengan AI
-              </Button>
+              {sisaUlasan > 0 && (
+                <Button size="sm" variant="outline" onClick={prosesUlangDenganAI} disabled={prosesUlangJalan} className="gap-2">
+                  {prosesUlangJalan ? (
+                    <SpinnerGap className="size-3.5 animate-spin" weight="duotone" />
+                  ) : (
+                    <ArrowsClockwise className="size-3.5" weight="duotone" />
+                  )}
+                  Analisis {sisaUlasan} ulasan tersisa
+                </Button>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -665,7 +697,7 @@ export default function DashboardPage() {
 
               {/* Action buttons */}
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" render={<Link href={`/unggah?lanjut=${aktif.id}`} />}>
+                <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/unggah?lanjut=${aktif.id}`} />}>
                   Lihat proses unggah
                 </Button>
                 {aktif.status === "berjalan" && (
@@ -713,9 +745,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {aktif.status === "selesai" && (
+      {hasilTersedia && (
         <>
-          {catatanPeringatan && (
+          {aktif.status === "selesai" && catatanPeringatan && (
             <div className="reveal mb-6 rounded-xl border border-amber-200 bg-amber-50 px-6 py-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-start gap-3">
@@ -746,9 +778,13 @@ export default function DashboardPage() {
 
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Stat
-              label="Total Ulasan"
-              value={aktif.totalUlasan}
-              sub={durasiTercatat ? `dianalisis dlm ${durasiTercatat}` : "seluruh data terunggah"}
+              label={hasilParsial ? "Sudah Dianalisis" : "Total Ulasan"}
+              value={hasilParsial ? aktif.ulasanDiproses : aktif.totalUlasan}
+              sub={hasilParsial
+                ? `dari ${aktif.totalUlasan} ulasan · ${sisaUlasan} tersisa`
+                : durasiTercatat
+                  ? `dianalisis dlm ${durasiTercatat}`
+                  : "seluruh data terunggah"}
               index={0}
             />
             <Stat
@@ -778,7 +814,7 @@ export default function DashboardPage() {
             <div className="reveal rounded-xl border border-border bg-card py-6 lg:col-span-2" style={{ animationDelay: "120ms" }}>
               <div className="px-6">
                 <h3 className="text-sm font-semibold leading-none tracking-tight">Proporsi Sentimen</h3>
-                <p className="mt-1.5 text-sm text-muted-foreground">Sebaran sentimen dari seluruh ulasan terlabel.</p>
+                <p className="mt-1.5 text-sm text-muted-foreground">Sebaran sentimen dari ulasan yang sudah berhasil dianalisis.</p>
               </div>
               <div className="mt-6 px-6">
                 <SentimenDonut
@@ -804,7 +840,7 @@ export default function DashboardPage() {
                   {aktif.kondisiUmum ?? "Dashboard kondisi umum belum tersedia."}
                 </p>
                 <div className="mt-6 space-y-2 text-sm">
-                  <BarisRingkas label="Ulasan tanpa label sentimen" nilai={String(aktif.totalUlasan - totalTerlabel)} />
+                  <BarisRingkas label="Ulasan belum dianalisis" nilai={String(sisaUlasan)} />
                   <BarisRingkas label="Sumber label" nilai="AI Gateway + fallback rating" />
                 </div>
               </div>
@@ -821,7 +857,7 @@ export default function DashboardPage() {
             <div className="mt-6 px-6">
               {dataGrafik.length === 0 ? (
                 <p className="py-8 text-center text-xs text-muted-foreground">
-                  Belum ada analisis yang selesai untuk digambarkan.
+                  Belum ada hasil analisis untuk digambarkan.
                 </p>
               ) : (
                 <div className="h-64">

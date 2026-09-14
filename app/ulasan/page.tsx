@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { formatTanggal, type AnalisisItem, type Sentimen, type UlasanItem } from "@/lib/types";
+import { analisisMemilikiHasil, formatTanggal, type AnalisisItem, type Sentimen, type UlasanItem } from "@/lib/types";
 
 const FILTER_SENTIMEN: { nilai: Sentimen | "semua"; label: string }[] = [
   { nilai: "semua", label: "Semua" },
@@ -49,8 +49,8 @@ export default function UlasanPage() {
       .then((data: { analisis?: AnalisisItem[] }) => {
         const list = Array.isArray(data?.analisis) ? data.analisis : [];
         setDaftarAnalisis(list);
-        const selesai = list.find((a) => a.status === "selesai");
-        if (selesai) setAnalisisId(selesai.id);
+        const tersedia = list.find(analisisMemilikiHasil);
+        if (tersedia) setAnalisisId(tersedia.id);
       })
       .catch(() => setDaftarAnalisis([]));
   }, []);
