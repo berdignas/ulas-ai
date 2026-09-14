@@ -86,10 +86,10 @@ function PengaturanContent() {
   const [isCustomAI, setIsCustomAI] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [customAIForm, setCustomAIForm] = useState({
-    providerName: "Groq",
-    baseUrl: "https://api.groq.com/openai/v1",
+    providerName: "OpenAgentic",
+    baseUrl: "https://openagentic.id/api/v1",
     apiKey: "",
-    model: "llama-3.1-8b-instant",
+    model: "deepseek-v4.1-flash",
   });
 
   const [modelOptions, setModelOptions] = useState<AIModelOption[]>([]);
@@ -117,7 +117,7 @@ function PengaturanContent() {
       const normalizeModel = (model?: string | null) =>
         options.some((item) => item.id === model)
           ? model!
-          : modelData.defaultModel || options.find((item) => item.configured)?.id || "gemini-3.5-flash-lite";
+          : modelData.defaultModel || options.find((item) => item.configured)?.id || "gemini-2.0-flash";
       setRumahSakitList(list);
       setModelOptions(options);
       setModelsLoading(false);
@@ -130,10 +130,10 @@ function PengaturanContent() {
           setIsCustomAI(rsCustom);
           if (rsCustom) {
             setCustomAIForm({
-              providerName: rs.customAI?.providerName || "Custom Provider",
-              baseUrl: rs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
+              providerName: rs.customAI?.providerName || "OpenAgentic",
+              baseUrl: rs.customAI?.baseUrl || "https://openagentic.id/api/v1",
               apiKey: "",
-              model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.1-8b-instant",
+              model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "deepseek-v4.1-flash",
             });
           }
           setForm({
@@ -159,10 +159,10 @@ function PengaturanContent() {
         setIsCustomAI(firstCustom);
         if (firstCustom) {
           setCustomAIForm({
-            providerName: firstRs.customAI?.providerName || "Custom Provider",
-            baseUrl: firstRs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
+            providerName: firstRs.customAI?.providerName || "OpenAgentic",
+            baseUrl: firstRs.customAI?.baseUrl || "https://openagentic.id/api/v1",
             apiKey: "",
-            model: firstRs.customAI?.model || firstRs.aiModel?.replace(/^custom:/, "") || "llama-3.1-8b-instant",
+            model: firstRs.customAI?.model || firstRs.aiModel?.replace(/^custom:/, "") || "deepseek-v4.1-flash",
           });
         }
         setForm({
@@ -200,10 +200,10 @@ function PengaturanContent() {
     setIsCustomAI(hasCustom);
     if (hasCustom) {
       setCustomAIForm({
-        providerName: rs.customAI?.providerName || "Custom Provider",
-        baseUrl: rs.customAI?.baseUrl || "https://api.groq.com/openai/v1",
+        providerName: rs.customAI?.providerName || "OpenAgentic",
+        baseUrl: rs.customAI?.baseUrl || "https://openagentic.id/api/v1",
         apiKey: "",
-        model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "llama-3.1-8b-instant",
+        model: rs.customAI?.model || rs.aiModel?.replace(/^custom:/, "") || "deepseek-v4.1-flash",
       });
     }
     setForm({
@@ -217,7 +217,7 @@ function PengaturanContent() {
       jamSinkron: rs.jamSinkron ?? 6,
       aiModel: modelOptions.some((model) => model.id === rs.aiModel)
         ? rs.aiModel!
-        : modelOptions.find((model) => model.configured)?.id || "gemini-3.5-flash-lite",
+        : modelOptions.find((model) => model.configured)?.id || "gemini-2.0-flash",
     });
     if (rs.aiModel && typeof window !== "undefined") {
       localStorage.setItem("ulas_ai_model", rs.aiModel);
@@ -232,10 +232,10 @@ function PengaturanContent() {
     setActiveSettingsTab("general");
     setIsCustomAI(false);
     setCustomAIForm({
-      providerName: "Groq",
-      baseUrl: "https://api.groq.com/openai/v1",
+      providerName: "OpenAgentic",
+      baseUrl: "https://openagentic.id/api/v1",
       apiKey: "",
-      model: "llama-3.1-8b-instant",
+      model: "deepseek-v4.1-flash",
     });
     setForm({
       nama: "",
@@ -246,7 +246,7 @@ function PengaturanContent() {
       aktif: true,
       zonaWaktu: "Asia/Jakarta",
       jamSinkron: 6,
-      aiModel: modelOptions.find((model) => model.configured)?.id || "gemini-3.5-flash-lite",
+      aiModel: modelOptions.find((model) => model.configured)?.id || "gemini-2.0-flash",
     });
     setLastAction(null);
     setTestResult(null);
@@ -728,7 +728,7 @@ function PengaturanContent() {
                         onClick={() =>
                           setForm((prev) => ({
                             ...prev,
-                            aiModel: "gemini-3.5-flash-lite",
+                            aiModel: "gemini-2.0-flash",
                           }))
                         }
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -737,24 +737,7 @@ function PengaturanContent() {
                             : "bg-background border-border text-foreground hover:bg-muted"
                         }`}
                       >
-                        Gemini cepat
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!modelOptions.some((model) => model.provider === "nvidia" && model.configured)}
-                        onClick={() =>
-                          setForm((prev) => ({
-                            ...prev,
-                            aiModel: modelOptions.find((model) => model.provider === "nvidia")?.id ?? form.aiModel,
-                          }))
-                        }
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-                          selectedModel?.provider === "nvidia"
-                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                            : "bg-background border-border text-foreground hover:bg-muted"
-                        }`}
-                      >
-                        NVIDIA terkonfigurasi
+                        Gemini 2.0 Flash
                       </button>
                     </div>
 
@@ -873,82 +856,7 @@ function PengaturanContent() {
                       >
                         OpenAI (GPT-4o)
                       </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCustomAIForm((p) => ({
-                            ...p,
-                            providerName: "Groq",
-                            baseUrl: "https://api.groq.com/openai/v1",
-                            model: "openai/gpt-oss-20b",
-                          }))
-                        }
-                        className={cn(
-                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
-                          customAIForm.providerName === "Groq" && customAIForm.model === "openai/gpt-oss-20b"
-                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                            : "bg-background border-border text-foreground hover:bg-muted"
-                        )}
-                      >
-                        Groq (GPT-OSS 20B)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCustomAIForm((p) => ({
-                            ...p,
-                            providerName: "Groq",
-                            baseUrl: "https://api.groq.com/openai/v1",
-                            model: "qwen/qwen3.6-27b",
-                          }))
-                        }
-                        className={cn(
-                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
-                          customAIForm.providerName === "Groq" && customAIForm.model === "qwen/qwen3.6-27b"
-                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                            : "bg-background border-border text-foreground hover:bg-muted"
-                        )}
-                      >
-                        Groq (Qwen 3.6 27B)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCustomAIForm((p) => ({
-                            ...p,
-                            providerName: "Groq",
-                            baseUrl: "https://api.groq.com/openai/v1",
-                            model: "llama-3.1-8b-instant",
-                          }))
-                        }
-                        className={cn(
-                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
-                          customAIForm.providerName === "Groq" && customAIForm.model === "llama-3.1-8b-instant"
-                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                            : "bg-background border-border text-foreground hover:bg-muted"
-                        )}
-                      >
-                        Groq (Llama 3.1 8B)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCustomAIForm((p) => ({
-                            ...p,
-                            providerName: "OpenRouter",
-                            baseUrl: "https://openrouter.ai/api/v1",
-                            model: "google/gemini-2.5-flash",
-                          }))
-                        }
-                        className={cn(
-                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
-                          customAIForm.providerName === "OpenRouter"
-                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                            : "bg-background border-border text-foreground hover:bg-muted"
-                        )}
-                      >
-                        OpenRouter
-                      </button>
+
                       <button
                         type="button"
                         onClick={() =>

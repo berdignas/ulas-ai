@@ -20,34 +20,35 @@ export interface AIExecutionConfig {
 
 const GEMINI_MODELS = [
   {
-    id: "gemini-3.5-flash-lite",
-    label: "Gemini 3.5 Flash-Lite",
-    description: "Paling cepat dan hemat untuk analisis ulasan dalam jumlah besar.",
+    id: "gemini-2.0-flash",
+    label: "Gemini 2.0 Flash",
+    description: "Model resmi Google terbaru, cepat dan hemat untuk analisis ulasan.",
     profile: "cepat" as const,
   },
   {
-    id: "gemini-3.5-flash",
-    label: "Gemini 3.5 Flash",
-    description: "Rekomendasi untuk akurasi lebih tinggi dengan latensi tetap rendah.",
+    id: "gemini-1.5-flash",
+    label: "Gemini 1.5 Flash",
+    description: "Stabil dan efisien untuk pemrosesan ulasan dalam jumlah besar.",
     profile: "seimbang" as const,
   },
   {
-    id: "gemini-3.6-flash",
-    label: "Gemini 3.6 Flash",
-    description: "Keseimbangan kecepatan dan kedalaman analisis.",
-    profile: "seimbang" as const,
-  },
-  {
-    id: "gemini-3.8-flash",
-    label: "Gemini 3.8 Flash",
-    description: "Kemampuan analisis lebih tinggi untuk ulasan yang kompleks.",
+    id: "gemini-1.5-pro",
+    label: "Gemini 1.5 Pro",
+    description: "Penalaran mendalam untuk ulasan panjang dan kompleks.",
     profile: "mendalam" as const,
   },
 ];
 
 function providerKey(provider: AIProvider): string {
-  if (provider === "gemini") return process.env.GEMINI_API_KEY ?? "";
-  if (provider === "nvidia") return process.env.NVIDIA_API_KEY ?? "";
+  if (provider === "gemini") {
+    const key = process.env.GEMINI_API_KEY?.trim() ?? "";
+    // Hanya valid jika diawali AIzaSy (kunci resmi Google AI Studio)
+    return key.startsWith("AIzaSy") ? key : "";
+  }
+  if (provider === "nvidia") {
+    const key = process.env.NVIDIA_API_KEY?.trim() ?? "";
+    return process.env.NVIDIA_MODEL ? key : "";
+  }
   return process.env.OPENCODE_ZEN_API_KEY ?? "";
 }
 
@@ -144,7 +145,7 @@ export function resolveAIConfig(
 
   const options = getAIModelOptions();
   const normalized = normalizeLegacyModel(preferredModel);
-  const defaultGemini = process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite";
+  const defaultGemini = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
   const defaultOption = options.find((item) => item.id === defaultGemini);
   const selected =
     (normalized ? options.find((item) => item.id === normalized) : undefined) ??
