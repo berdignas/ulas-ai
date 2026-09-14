@@ -108,8 +108,9 @@ export default function DashboardPage() {
       .then((data: { analisis?: AnalisisItem[] }) => {
         const list = Array.isArray(data?.analisis) ? data.analisis : [];
         setDaftar(list);
+        const berjalan = list.find((a) => a.status === "berjalan");
         const selesai = list.filter((a) => a.status === "selesai");
-        setDipilih(selesai[0]?.id ?? list[0]?.id ?? null);
+        setDipilih(berjalan?.id ?? selesai[0]?.id ?? list[0]?.id ?? null);
         if (selesai.length >= 2) {
           setPeriodeA(selesai[1].id);
           setPeriodeB(selesai[0].id);
@@ -131,15 +132,29 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [statusAktif, muatDaftar]);
 
-  // Start/stop elapsed timer
+  // Persist timer start time across navigations using localStorage.
+  // Key includes analisisId so different sessions don't bleed into each other.
+  const TIMER_KEY = dipilih !== null ? `analisis-timer-${dipilih}` : null;
+
   useEffect(() => {
+    if (!TIMER_KEY) return;
+
     if (statusAktif === "berjalan") {
-      setWaktuMulaiAnalisis((prev) => prev ?? new Date());
-      setElapsedDetik(0);
+      // Restore existing start time, or record a new one
+      const stored = localStorage.getItem(TIMER_KEY);
+      const startMs = stored ? Number(stored) : Date.now();
+      if (!stored) localStorage.setItem(TIMER_KEY, String(startMs));
+
+      const startDate = new Date(startMs);
+      setWaktuMulaiAnalisis(startDate);
+      setElapsedDetik(Math.floor((Date.now() - startMs) / 1000));
     } else {
+      // Analysis ended — clear the stored start time
+      localStorage.removeItem(TIMER_KEY);
       setWaktuMulaiAnalisis(null);
     }
-  }, [statusAktif]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusAktif, TIMER_KEY]);
 
   useEffect(() => {
     if (!waktuMulaiAnalisis) return;
@@ -183,6 +198,9 @@ export default function DashboardPage() {
         setPesanProsesUlang(data.pesan ?? "Kunci API AI belum diatur.");
         tambahLog("Analisis dimulai tanpa AI — sentimen ditentukan dari rating bintang.", "peringatan");
       } else {
+        try {
+          localStorage.setItem(`analisis-timer-${dipilih}`, String(Date.now()));
+        } catch {}
         tambahLog("Memulai proses analisis AI...", "info");
         await muatDaftar();
       }

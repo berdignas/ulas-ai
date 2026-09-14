@@ -91,13 +91,16 @@ function UnggahInner() {
           setProgres({ diproses: data.ulasanDiproses, total: data.totalUlasan });
           if (data.status === "selesai") {
             berhentiPolling();
+            try { localStorage.removeItem(`analisis-timer-${id}`); } catch {}
             setTahap("selesai");
           } else if (data.status === "gagal") {
             berhentiPolling();
+            try { localStorage.removeItem(`analisis-timer-${id}`); } catch {}
             setError(data.catatan ?? "Proses analisis gagal.");
             setTahap("gagal");
           } else if (data.status === "berhenti") {
             berhentiPolling();
+            try { localStorage.removeItem(`analisis-timer-${id}`); } catch {}
             setBerhentiJalan(false);
             setTahap("berhenti");
           }
@@ -180,6 +183,9 @@ function UnggahInner() {
       }
       setProgres({ diproses: 0, total: hasil.totalUlasan });
       setTahap("berjalan");
+      try {
+        localStorage.setItem(`analisis-timer-${hasil.id}`, String(Date.now()));
+      } catch {}
       pantauStatus(hasil.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal terhubung ke server.");
