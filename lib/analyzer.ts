@@ -71,11 +71,11 @@ export async function hapusAspekYatim(): Promise<void> {
   }
 }
 
-export function mulaiProsesAnalisis(analisisId: number): Promise<void> | null {
+export function mulaiProsesAnalisis(analisisId: number, isResume = false): Promise<void> | null {
   if (runningProcesses.has(analisisId)) return null;
   runningProcesses.add(analisisId);
   stopRequests.delete(analisisId);
-  return prosesAnalisis(analisisId).finally(() => {
+  return prosesAnalisis(analisisId, isResume).finally(() => {
     runningProcesses.delete(analisisId);
     stopRequests.delete(analisisId);
   });
@@ -103,7 +103,7 @@ function buatBatchAdaptif(items: UlasanRow[]): UlasanRow[][] {
   return batches;
 }
 
-async function prosesAnalisis(analisisId: number): Promise<void> {
+async function prosesAnalisis(analisisId: number, isResume = false): Promise<void> {
   const mulaiWaktuMs = Date.now();
   try {
     // Hanya update status ke "berjalan" tanpa menghapus catatan/kondisiUmum.
@@ -133,8 +133,17 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     const schemaV3Tersedia = !lokasiResponse.error;
     const daftarLokasi = toCamel<LokasiLayananRsRow[]>(lokasiResponse.data ?? []);
 
-    const belumDiproses = daftarUlasan.filter((u) => u.sumberLabel !== "ai");
-    const sudahDiproses = daftarUlasan.filter((u) => u.sumberLabel === "ai");
+    // Saat RESUME: hanya proses ulasan yang benar-benar belum punya label sama sekali
+    // (sumberLabel = null). Ulasan yang sudah berlabel "ai" maupun "rating" dianggap
+    // selesai dan tidak akan di-reset — ini mencegah progress bar mundur.
+    //
+    // Saat RESTART PENUH: proses semua ulasan dari nol (termasuk yang sudah berlabel).
+    const belumDiproses = isResume
+      ? daftarUlasan.filter((u) => !u.sumberLabel)                // hanya yang belum berlabel
+      : daftarUlasan.filter((u) => u.sumberLabel !== "ai");        // non-ai (restart perilaku lama)
+    const sudahDiproses = isResume
+      ? daftarUlasan.filter((u) => !!u.sumberLabel)                // semua yang sudah berlabel (ai + rating)
+      : daftarUlasan.filter((u) => u.sumberLabel === "ai");        // hanya ai
 
     const idBelum = belumDiproses.map((u) => u.id);
     if (idBelum.length > 0) {
@@ -162,6 +171,7 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     await supabase.from(analisis)
       .update(toSnake({ totalUlasan: daftarUlasan.length, ulasanDiproses: ulasanDiprosesCounter }))
       .eq("id", analisisId);
+
 
     let gagalDilabel = 0;
     let gagalAI = 0;

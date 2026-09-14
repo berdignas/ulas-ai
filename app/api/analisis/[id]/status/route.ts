@@ -23,7 +23,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   // tidak diproses ulang, sehingga aman dijalankan di localhost maupun serverless.
   let berjalanDiWorker = prosesSedangBerjalan(analisisId);
   if (item.status === "berjalan" && !berjalanDiWorker) {
-    const proses = mulaiProsesAnalisis(analisisId);
+    // Auto-resume: worker mati tapi status masih "berjalan" — ini selalu resume, bukan restart.
+    const proses = mulaiProsesAnalisis(analisisId, true);
     if (proses) {
       after(() => proses);
       berjalanDiWorker = true;

@@ -51,7 +51,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: `Gagal menandai analisis sebagai berjalan: ${startError.message}` }, { status: 500 });
   }
 
-  const proses = mulaiProsesAnalisis(analisisId);
+  const proses = mulaiProsesAnalisis(analisisId, isResume);
   if (!proses) {
     return NextResponse.json({ status: "berjalan", pesan: "Analisis sedang diproses." });
   }
