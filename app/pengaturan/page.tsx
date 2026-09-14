@@ -804,6 +804,44 @@ function PengaturanContent() {
                             ...p,
                             providerName: "Groq",
                             baseUrl: "https://api.groq.com/openai/v1",
+                            model: "openai/gpt-oss-20b",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "Groq" && customAIForm.model === "openai/gpt-oss-20b"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Groq (GPT-OSS 20B)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "Groq",
+                            baseUrl: "https://api.groq.com/openai/v1",
+                            model: "qwen/qwen3.6-27b",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "Groq" && customAIForm.model === "qwen/qwen3.6-27b"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Groq (Qwen 3.6 27B)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "Groq",
+                            baseUrl: "https://api.groq.com/openai/v1",
                             model: "llama-3.1-8b-instant",
                           }))
                         }
@@ -814,26 +852,7 @@ function PengaturanContent() {
                             : "bg-background border-border text-foreground hover:bg-muted"
                         )}
                       >
-                        Groq (Llama 3.1 8B - Cepat)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCustomAIForm((p) => ({
-                            ...p,
-                            providerName: "Groq",
-                            baseUrl: "https://api.groq.com/openai/v1",
-                            model: "llama-3.3-70b-versatile",
-                          }))
-                        }
-                        className={cn(
-                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
-                          customAIForm.providerName === "Groq" && customAIForm.model === "llama-3.3-70b-versatile"
-                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                            : "bg-background border-border text-foreground hover:bg-muted"
-                        )}
-                      >
-                        Groq (Llama 3.3 70B)
+                        Groq (Llama 3.1 8B)
                       </button>
                       <button
                         type="button"
