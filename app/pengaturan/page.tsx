@@ -802,6 +802,44 @@ function PengaturanContent() {
                         onClick={() =>
                           setCustomAIForm((p) => ({
                             ...p,
+                            providerName: "OpenAI",
+                            baseUrl: "https://api.openai.com/v1",
+                            model: "gpt-4o-mini",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "OpenAI" && customAIForm.model === "gpt-4o-mini"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        OpenAI (GPT-4o mini)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "OpenAI",
+                            baseUrl: "https://api.openai.com/v1",
+                            model: "gpt-4o",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "OpenAI" && customAIForm.model === "gpt-4o"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        OpenAI (GPT-4o)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
                             providerName: "Groq",
                             baseUrl: "https://api.groq.com/openai/v1",
                             model: "openai/gpt-oss-20b",
