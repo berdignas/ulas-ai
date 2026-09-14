@@ -104,6 +104,7 @@ function buatBatchAdaptif(items: UlasanRow[]): UlasanRow[][] {
 }
 
 async function prosesAnalisis(analisisId: number): Promise<void> {
+  const mulaiWaktuMs = Date.now();
   try {
     await supabase.from(analisis)
       .update(toSnake({ status: "berjalan", catatan: null, kondisiUmum: null }))
@@ -418,6 +419,11 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     if (gagalDilabel > 0) {
       catatan.push(`${gagalDilabel} ulasan tidak dapat diberi label sentimen (tidak ada rating dan AI gagal).`);
     }
+    const totalDetik = Math.max(1, Math.round((Date.now() - mulaiWaktuMs) / 1000));
+    const menit = Math.floor(totalDetik / 60);
+    const sisaDetik = totalDetik % 60;
+    const infoWaktu = menit > 0 ? `${menit} menit ${sisaDetik} detik` : `${sisaDetik} detik`;
+    catatan.unshift(`Selesai dianalisis dalam waktu ${infoWaktu}.`);
 
     await supabase.from(analisis)
       .update(toSnake({
@@ -427,7 +433,7 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
         totalNegatif: negCount,
         totalNetral: netCount,
         kondisiUmum,
-        catatan: catatan.length > 0 ? catatan.join(" ") : null,
+        catatan: catatan.join(" "),
       }))
       .eq("id", analisisId);
   } catch (error) {

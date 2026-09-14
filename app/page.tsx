@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -13,6 +13,7 @@ import {
   CheckCircle,
   ChartDonut,
   ChartLineUp,
+  Clock,
   Download,
   Info,
   Minus,
@@ -49,7 +50,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { formatTanggal, type AnalisisItem } from "@/lib/types";
+import {
+  formatTanggal,
+  formatDurasi,
+  ekstraksiDurasiDariCatatan,
+  bersihkanCatatanPeringatan,
+  type AnalisisItem,
+} from "@/lib/types";
 
 type TrendPoint = {
   tanggal: string;
@@ -71,6 +78,12 @@ export default function DashboardPage() {
   const [hentikanJalan, setHentikanJalan] = useState(false);
   const [waktuMulaiAnalisis, setWaktuMulaiAnalisis] = useState<Date | null>(null);
   const [elapsedDetik, setElapsedDetik] = useState(0);
+  const [notifSelesai, setNotifSelesai] = useState<{
+    id: number;
+    totalUlasan: number;
+    durasi: string;
+  } | null>(null);
+  const prevStatusRef = useRef<string | undefined>(undefined);
   const [logAktivitas, setLogAktivitas] = useState<{ waktu: string; pesan: string; tipe: "info" | "sukses" | "error" | "peringatan" }[]>([]);
   const [namaRS, setNamaRS] = useState<string>("Rumah Sakit Umum");
   const [rumahSakitId, setRumahSakitId] = useState<number | null>(null);
@@ -132,12 +145,20 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [statusAktif, muatDaftar]);
 
+  const tambahLog = useCallback((pesan: string, tipe: "info" | "sukses" | "error" | "peringatan" = "info") => {
+    const waktu = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLogAktivitas((prev) => [{ waktu, pesan, tipe }, ...prev].slice(0, 50));
+  }, []);
+
   // Persist timer start time across navigations using localStorage.
   // Key includes analisisId so different sessions don't bleed into each other.
   const TIMER_KEY = dipilih !== null ? `analisis-timer-${dipilih}` : null;
 
   useEffect(() => {
-    if (!TIMER_KEY) return;
+    if (!TIMER_KEY || dipilih === null) {
+      prevStatusRef.current = statusAktif;
+      return;
+    }
 
     if (statusAktif === "berjalan") {
       // Restore existing start time, or record a new one
@@ -148,13 +169,48 @@ export default function DashboardPage() {
       const startDate = new Date(startMs);
       setWaktuMulaiAnalisis(startDate);
       setElapsedDetik(Math.floor((Date.now() - startMs) / 1000));
+    } else if (statusAktif === "selesai") {
+      const stored = localStorage.getItem(TIMER_KEY);
+      const itemAktif = (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih);
+      const durasiCatatan = ekstraksiDurasiDariCatatan(itemAktif?.catatan);
+
+      if (prevStatusRef.current === "berjalan" || stored) {
+        const durasiDetik = stored
+          ? Math.max(1, Math.floor((Date.now() - Number(stored)) / 1000))
+          : (elapsedDetik > 0 ? elapsedDetik : 0);
+        const durasiTeks = durasiCatatan || formatDurasi(durasiDetik);
+
+        setNotifSelesai({
+          id: dipilih,
+          totalUlasan: itemAktif?.totalUlasan ?? 0,
+          durasi: durasiTeks,
+        });
+
+        tambahLog(
+          `Analisis selesai: ${itemAktif?.totalUlasan ?? 0} ulasan berhasil dianalisis dalam waktu ${durasiTeks}.`,
+          "sukses"
+        );
+
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          try {
+            new Notification("Analisis Sentimen Selesai", {
+              body: `${itemAktif?.totalUlasan ?? 0} ulasan selesai dianalisis dalam waktu ${durasiTeks}.`,
+              icon: "/favicon.ico",
+            });
+          } catch {}
+        }
+      }
+
+      localStorage.removeItem(TIMER_KEY);
+      setWaktuMulaiAnalisis(null);
     } else {
-      // Analysis ended — clear the stored start time
       localStorage.removeItem(TIMER_KEY);
       setWaktuMulaiAnalisis(null);
     }
+
+    prevStatusRef.current = statusAktif;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusAktif, TIMER_KEY]);
+  }, [statusAktif, TIMER_KEY, dipilih, daftar, tambahLog]);
 
   useEffect(() => {
     if (!waktuMulaiAnalisis) return;
@@ -163,11 +219,6 @@ export default function DashboardPage() {
     }, 1000);
     return () => clearInterval(interval);
   }, [waktuMulaiAnalisis]);
-
-  const tambahLog = (pesan: string, tipe: "info" | "sukses" | "error" | "peringatan" = "info") => {
-    const waktu = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    setLogAktivitas((prev) => [{ waktu, pesan, tipe }, ...prev].slice(0, 50));
-  };
 
   useEffect(() => {
     if (dipilih === null) {
@@ -201,6 +252,10 @@ export default function DashboardPage() {
         try {
           localStorage.setItem(`analisis-timer-${dipilih}`, String(Date.now()));
         } catch {}
+        setNotifSelesai(null);
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+          Notification.requestPermission().catch(() => undefined);
+        }
         tambahLog("Memulai proses analisis AI...", "info");
         await muatDaftar();
       }
@@ -244,6 +299,10 @@ export default function DashboardPage() {
     setSyncLoading(true);
     setPesanAksi(null);
     setPesanSukses(null);
+    setNotifSelesai(null);
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => undefined);
+    }
     tambahLog(`Memulai penarikan data Google Maps — periode: ${periode}`, "info");
     try {
       const res = await fetch("/api/sinkron", {
@@ -301,6 +360,8 @@ export default function DashboardPage() {
 
   const aktif = useMemo(() => (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih) ?? null, [daftar, dipilih]);
   const totalTerlabel = aktif ? aktif.totalPositif + aktif.totalNegatif + aktif.totalNetral : 0;
+  const catatanPeringatan = useMemo(() => bersihkanCatatanPeringatan(aktif?.catatan), [aktif?.catatan]);
+  const durasiTercatat = useMemo(() => ekstraksiDurasiDariCatatan(aktif?.catatan), [aktif?.catatan]);
 
   const selesaiUrutWaktu = useMemo(
     () =>
@@ -489,6 +550,39 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {notifSelesai && (
+        <div className="reveal mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 rounded-xl border border-emerald-300 bg-emerald-50/95 p-4 shadow-sm text-emerald-950">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm">
+              <CheckCircle className="size-6" weight="fill" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-emerald-950">
+                  Analisis Ulasan Selesai!
+                </h4>
+                <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600 text-[10px] text-white">
+                  Selesai
+                </Badge>
+              </div>
+              <p className="text-xs text-emerald-900/85 mt-0.5">
+                Sebanyak <span className="font-semibold text-emerald-950">{notifSelesai.totalUlasan} ulasan</span> telah selesai dianalisis dalam waktu <span className="font-semibold font-mono bg-emerald-200/70 px-1.5 py-0.5 rounded text-emerald-950">{notifSelesai.durasi}</span>.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 border-emerald-300 bg-white/85 text-xs text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900"
+              onClick={() => setNotifSelesai(null)}
+            >
+              Tutup Notifikasi
+            </Button>
+          </div>
+        </div>
+      )}
+
       {aktif.status !== "selesai" && (
         <div className="reveal mb-6 rounded-xl border border-border bg-card px-6 py-5 space-y-4">
           {aktif.status === "gagal" ? (
@@ -619,12 +713,12 @@ export default function DashboardPage() {
 
       {aktif.status === "selesai" && (
         <>
-          {aktif.catatan && (
+          {catatanPeringatan && (
             <div className="reveal mb-6 rounded-xl border border-amber-200 bg-amber-50 px-6 py-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-start gap-3">
                   <Info className="mt-0.5 size-4 shrink-0 text-amber-700" weight="duotone" />
-                  <p className="text-sm leading-relaxed text-amber-900">{aktif.catatan}</p>
+                  <p className="text-sm leading-relaxed text-amber-900">{catatanPeringatan}</p>
                 </div>
                 <Button size="sm" variant="outline" onClick={prosesUlangDenganAI} disabled={prosesUlangJalan}>
                   {prosesUlangJalan ? (
@@ -641,8 +735,20 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {durasiTercatat && !notifSelesai && (
+            <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
+              <Clock className="size-3.5 text-emerald-600" weight="bold" />
+              <span>Waktu pengerjaan analisis: <strong className="font-mono text-emerald-950 font-semibold">{durasiTercatat}</strong></span>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <Stat label="Total Ulasan" value={aktif.totalUlasan} sub="seluruh data terunggah" index={0} />
+            <Stat
+              label="Total Ulasan"
+              value={aktif.totalUlasan}
+              sub={durasiTercatat ? `dianalisis dlm ${durasiTercatat}` : "seluruh data terunggah"}
+              index={0}
+            />
             <Stat
               label="Positif"
               value={aktif.totalPositif}

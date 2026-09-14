@@ -89,3 +89,28 @@ export function formatTanggalWaktu(iso: string): string {
     minute: "2-digit",
   });
 }
+
+export function formatDurasi(totalDetik: number): string {
+  if (!Number.isFinite(totalDetik) || totalDetik <= 0) return "0 detik";
+  if (totalDetik < 60) {
+    return `${totalDetik} detik`;
+  }
+  const menit = Math.floor(totalDetik / 60);
+  const detik = totalDetik % 60;
+  if (detik === 0) {
+    return `${menit} menit`;
+  }
+  return `${menit} menit ${detik} detik`;
+}
+
+export function ekstraksiDurasiDariCatatan(catatan: string | null | undefined): string | null {
+  if (!catatan) return null;
+  const match = catatan.match(/Selesai dianalisis dalam waktu ([^.]+)\./);
+  return match ? match[1].trim() : null;
+}
+
+export function bersihkanCatatanPeringatan(catatan: string | null | undefined): string | null {
+  if (!catatan) return null;
+  const sisa = catatan.replace(/Selesai dianalisis dalam waktu [^.]+\.\s*/gi, "").trim();
+  return sisa.length > 0 ? sisa : null;
+}

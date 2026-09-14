@@ -8,6 +8,7 @@ import {
   ArrowsClockwise,
   CaretRight,
   CheckCircle,
+  Clock,
   FileCsv,
   SpinnerGap,
   StopCircle,
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { formatTanggal, type ParsedPreview } from "@/lib/types";
+import { formatTanggal, formatDurasi, ekstraksiDurasiDariCatatan, type ParsedPreview } from "@/lib/types";
 
 type Tahap = "pilih" | "pratinjau" | "berjalan" | "selesai" | "gagal" | "berhenti" | "duplikat";
 
@@ -67,6 +68,8 @@ function UnggahInner() {
   const [error, setError] = useState<string | null>(null);
   const [unggahBerjalan, setUnggahBerjalan] = useState(false);
   const [progres, setProgres] = useState({ diproses: 0, total: 0 });
+  const [elapsedDetik, setElapsedDetik] = useState(0);
+  const [durasiSelesai, setDurasiSelesai] = useState<string | null>(null);
   const [berhentiJalan, setBerhentiJalan] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -91,7 +94,27 @@ function UnggahInner() {
           setProgres({ diproses: data.ulasanDiproses, total: data.totalUlasan });
           if (data.status === "selesai") {
             berhentiPolling();
-            try { localStorage.removeItem(`analisis-timer-${id}`); } catch {}
+            let finalDurasi = ekstraksiDurasiDariCatatan(data.catatan);
+            try {
+              const start = localStorage.getItem(`analisis-timer-${id}`);
+              if (!finalDurasi && start) {
+                const totalDetik = Math.max(1, Math.floor((Date.now() - Number(start)) / 1000));
+                finalDurasi = formatDurasi(totalDetik);
+              }
+              localStorage.removeItem(`analisis-timer-${id}`);
+            } catch {}
+            if (!finalDurasi && elapsedDetik > 0) {
+              finalDurasi = formatDurasi(elapsedDetik);
+            }
+            setDurasiSelesai(finalDurasi);
+            if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+              try {
+                new Notification("Analisis Sentimen Selesai", {
+                  body: `${data.totalUlasan} ulasan selesai dianalisis${finalDurasi ? ` dalam waktu ${finalDurasi}` : ""}.`,
+                  icon: "/favicon.ico",
+                });
+              } catch {}
+            }
             setTahap("selesai");
           } else if (data.status === "gagal") {
             berhentiPolling();
@@ -109,7 +132,7 @@ function UnggahInner() {
         }
       }, 1500);
     },
-    [berhentiPolling]
+    [berhentiPolling, elapsedDetik]
   );
 
   useEffect(() => {
@@ -121,6 +144,28 @@ function UnggahInner() {
     }
     return berhentiPolling;
   }, [lanjutId, pantauStatus, berhentiPolling]);
+
+  useEffect(() => {
+    if (tahap !== "berjalan" || idAktif === null) return;
+    const key = `analisis-timer-${idAktif}`;
+    let startMs = Date.now();
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        startMs = Number(stored);
+      } else {
+        localStorage.setItem(key, String(startMs));
+      }
+    } catch {}
+
+    setElapsedDetik(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+
+    const interval = setInterval(() => {
+      setElapsedDetik(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [tahap, idAktif]);
 
   const pilihFile = async (file: File) => {
     setError(null);
@@ -169,6 +214,11 @@ function UnggahInner() {
     if (!hasil) return;
     setError(null);
     setBerhentiJalan(false);
+    setElapsedDetik(0);
+    setDurasiSelesai(null);
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => undefined);
+    }
     try {
       const res = await fetch(`/api/analisis/${hasil.id}/process`, { method: "POST" });
       let data: any = null;
@@ -197,6 +247,8 @@ function UnggahInner() {
     setHasil(null);
     setError(null);
     setProgres({ diproses: 0, total: 0 });
+    setElapsedDetik(0);
+    setDurasiSelesai(null);
     setTahap("pilih");
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -323,9 +375,13 @@ function UnggahInner() {
           </p>
           <div className="mt-8 w-full max-w-md space-y-2">
             <Progress value={progres.total > 0 ? (progres.diproses / progres.total) * 100 : 0} />
-            <p className="font-mono text-xs tabular-nums text-muted-foreground">
-              {progres.diproses} / {progres.total} ulasan diproses
-            </p>
+            <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+              <span>{progres.diproses} / {progres.total} ulasan diproses</span>
+              <span className="font-mono flex items-center gap-1 text-primary">
+                <Clock className="size-3.5" weight="bold" />
+                {String(Math.floor(elapsedDetik / 60)).padStart(2, "0")}:{String(elapsedDetik % 60).padStart(2, "0")}
+              </span>
+            </div>
           </div>
           <Button
             variant="outline"
@@ -370,11 +426,16 @@ function UnggahInner() {
       )}
 
       {tahap === "selesai" && (
-        <div className="reveal flex flex-col items-center rounded-xl border border-emerald-200 bg-emerald-50/60 px-6 py-20 text-center">
-          <CheckCircle className="size-9 text-emerald-600" weight="duotone" />
-          <h3 className="mt-4 text-lg font-semibold tracking-tight text-emerald-950">Analisis selesai</h3>
-          <p className="mt-1.5 max-w-md text-sm leading-relaxed text-emerald-900/80">
-            Hasil analisis sudah siap. Buka dashboard untuk melihat ringkasan sentimen.
+        <div className="reveal flex flex-col items-center rounded-xl border border-emerald-200 bg-emerald-50/70 px-6 py-16 text-center">
+          <div className="flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 mb-3 shadow-sm">
+            <CheckCircle className="size-8" weight="fill" />
+          </div>
+          <h3 className="text-xl font-semibold tracking-tight text-emerald-950">Analisis Selesai!</h3>
+          <p className="mt-2 max-w-md text-sm leading-relaxed text-emerald-900/85">
+            Seluruh <span className="font-semibold text-emerald-950">{progres.total} ulasan</span> telah berhasil dianalisis
+            {durasiSelesai ? (
+              <> dalam waktu <span className="font-semibold font-mono text-emerald-950 bg-emerald-200/70 px-2 py-0.5 rounded">{durasiSelesai}</span>.</>
+            ) : "."}
           </p>
           <div className="mt-6 flex gap-2">
             <Button render={<Link href="/" />}>
