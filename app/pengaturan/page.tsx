@@ -802,6 +802,44 @@ function PengaturanContent() {
                         onClick={() =>
                           setCustomAIForm((p) => ({
                             ...p,
+                            providerName: "OpenAgentic",
+                            baseUrl: "https://openagentic.id/api/v1",
+                            model: "deepseek-v4.1-flash",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "OpenAgentic" && customAIForm.model === "deepseek-v4.1-flash"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        OpenAgentic (DeepSeek V4.1)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
+                            providerName: "OpenAgentic",
+                            baseUrl: "https://openagentic.id/api/v1",
+                            model: "gemini-3.8-flash-high",
+                          }))
+                        }
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer",
+                          customAIForm.providerName === "OpenAgentic" && customAIForm.model === "gemini-3.8-flash-high"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-background border-border text-foreground hover:bg-muted"
+                        )}
+                      >
+                        OpenAgentic (Gemini 3.8)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCustomAIForm((p) => ({
+                            ...p,
                             providerName: "OpenAI",
                             baseUrl: "https://api.openai.com/v1",
                             model: "gpt-4o-mini",

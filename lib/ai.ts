@@ -583,6 +583,23 @@ function normalizeHasil(raw: unknown, lokasi: LokasiLayananReferensi[] = []): Ha
   };
 }
 
+export async function parseResponseJson<T = unknown>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch (err) {
+    const cleaned = text.trim();
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)) as T;
+      } catch {}
+    }
+    throw err;
+  }
+}
+
 async function callOnce(
   teksUlasan: string,
   rating: number | null,
@@ -631,7 +648,7 @@ async function callOnce(
       throw new Error(`AI Gateway error ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
 
-    const data = (await res.json()) as {
+    const data = (await parseResponseJson(res)) as {
       choices?: { message?: { content?: string } }[];
     };
     const content = data.choices?.[0]?.message?.content ?? "";
@@ -736,7 +753,7 @@ export async function buatKondisiUmum(stats: {
       }),
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const data = (await parseResponseJson(res)) as { choices?: { message?: { content?: string } }[] };
     const content = data.choices?.[0]?.message?.content?.trim();
     return content || null;
   } catch {
@@ -810,7 +827,7 @@ async function callOnceNVIDIA(
       throw new Error(`NVIDIA AI error ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
 
-    const data = (await res.json()) as {
+    const data = (await parseResponseJson(res)) as {
       choices?: { message?: { content?: string } }[];
     };
     const content = data.choices?.[0]?.message?.content ?? "";

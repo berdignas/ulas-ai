@@ -1,4 +1,4 @@
-import { getEnv, getEnvGemini, aiConfigured, aiConfiguredGemini, aiConfiguredNVIDIA } from "./ai";
+import { getEnv, getEnvGemini, aiConfigured, aiConfiguredGemini, aiConfiguredNVIDIA, parseResponseJson } from "./ai";
 
 export type UnitLayanan = "IGD" | "Farmasi" | "Poliklinik/Dokter" | "Rawat Inap" | "Kasir/BPJS" | "Fasilitas & Parkir" | "Lainnya";
 export type KategoriMasalah = "Waktu Tunggu" | "Keramahan Staf" | "Kebersihan" | "Akurasi Administrasi" | "Kompetensi Medis" | "Lainnya";
@@ -155,7 +155,7 @@ async function callOnce(teksUlasan: string, rating: number | null, timeoutMs: nu
       throw new Error(`AI Gateway error ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
 
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const data = (await parseResponseJson(res)) as { choices?: { message?: { content?: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? "";
     return normalizeHasil(extractJson(content));
   } finally {
@@ -307,7 +307,7 @@ async function callOnceNVIDIAhospital(teksUlasan: string, rating: number | null,
       throw new Error(`NVIDIA AI error ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
 
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const data = (await parseResponseJson(res)) as { choices?: { message?: { content?: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? "";
     return normalizeHasil(extractJson(content));
   } finally {
