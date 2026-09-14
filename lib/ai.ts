@@ -397,13 +397,45 @@ export async function analisisBatchUlasanDenganAI(
 
   const config = resolveAIConfig(preferredModel, customConfig);
   if (config.provider !== "gemini") {
-    const entries = await Promise.all(
-      items.map(async (item) => [
-        item.id,
-        await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi, customConfig),
-      ] as const)
-    );
-    return new Map(entries);
+    let lastError: unknown = null;
+    const maksimumPercobaan = 4;
+    for (let jumlahPercobaan = 0; jumlahPercobaan < maksimumPercobaan; jumlahPercobaan++) {
+      try {
+        return await callOnceOpenAIBatch(items, 60_000, config.model, lokasi, customConfig);
+      } catch (error) {
+        lastError = error;
+        const retryable =
+          error instanceof RetryableError ||
+          error instanceof TypeError ||
+          (error instanceof Error && error.name === "AbortError");
+        if (!retryable || jumlahPercobaan === maksimumPercobaan - 1) break;
+        const backoff = [5_000, 15_000, 30_000, 60_000][jumlahPercobaan] ?? 60_000;
+        const retryAfter = error instanceof RetryableError ? error.retryAfterMs : undefined;
+        const jitter = Math.floor(Math.random() * 1_000);
+        const jeda = Math.min(120_000, Math.max(backoff, retryAfter ?? 0) + jitter);
+        console.warn(`[ai] ${config.providerLabel} batch ditunda ${jeda}ms sebelum percobaan ${jumlahPercobaan + 2}/${maksimumPercobaan}`);
+        await callbacks.onRetry?.({
+          percobaanBerikutnya: jumlahPercobaan + 2,
+          maksimumPercobaan,
+          jedaMs: jeda,
+          error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+        });
+        await new Promise((resolve) => setTimeout(resolve, jeda));
+      }
+    }
+
+    if (lastError instanceof RetryableError || lastError instanceof TypeError ||
+        (lastError instanceof Error && lastError.name === "AbortError")) {
+      throw lastError;
+    }
+
+    console.warn(`[ai] ${config.providerLabel} batch gagal, mencoba per ulasan secara sekuensial:`, lastError);
+    for (const item of items) {
+      const res = await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi, customConfig);
+      hasil.set(item.id, res);
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    return hasil;
   }
 
   let lastError: unknown = null;
@@ -952,6 +984,96 @@ async function callOnceGeminiBatch(
 
     const data = await res.json();
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const parsed = extractJson(content);
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Format respons batch AI tidak valid");
+    }
+
+    const rows = (parsed as Record<string, unknown>).hasil;
+    if (!Array.isArray(rows)) throw new Error("Respons batch AI tidak memiliki array hasil");
+
+    const output = new Map<number, HasilAnalisisUlasan>();
+    for (const row of rows) {
+      if (typeof row !== "object" || row === null) continue;
+      const id = Number((row as Record<string, unknown>).id);
+      if (!items.some((item) => item.id === id) || output.has(id)) continue;
+      output.set(id, normalizeHasil(row, lokasi));
+    }
+
+    if (output.size !== items.length) {
+      throw new Error(`Respons batch AI tidak lengkap (${output.size}/${items.length})`);
+    }
+    return output;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callOnceOpenAIBatch(
+  items: InputAnalisisUlasan[],
+  timeoutMs: number,
+  model: string,
+  lokasi: LokasiLayananReferensi[] = [],
+  customConfig?: CustomAIConfig | null
+): Promise<Map<number, HasilAnalisisUlasan>> {
+  const env = getEnv();
+  const rawKey = customConfig?.apiKey || env.apiKey;
+  const apiKey = rawKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+  const baseUrl = (customConfig?.baseUrl || env.baseUrl).trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, "");
+  const activeModel = model || customConfig?.model || env.model;
+
+  await tungguGiliranNVIDIA();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: activeModel,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `${promptDenganLokasi(lokasi)}\n\n${BATCH_SYSTEM_PROMPT.slice(SYSTEM_PROMPT.length)}`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ulasan: items.map((item) => ({
+                id: item.id,
+                rating: item.rating,
+                ulasan: item.teksUlasan,
+              })),
+            }),
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    if (res.status === 429 || res.status >= 500) {
+      const errorText = await res.text().catch(() => "");
+      const retryAfterDetik = Number(res.headers.get("retry-after"));
+      const retryAfterMs =
+        Number.isFinite(retryAfterDetik) && retryAfterDetik > 0 ? retryAfterDetik * 1000 : undefined;
+      throw new RetryableError(
+        `AI Gateway batch error ${res.status}: ${errorText.slice(0, 150)}`,
+        res.status,
+        retryAfterMs
+      );
+    }
+    if (!res.ok) {
+      throw new Error(`AI Gateway batch error ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content ?? "";
     const parsed = extractJson(content);
     if (typeof parsed !== "object" || parsed === null) {
       throw new Error("Format respons batch AI tidak valid");

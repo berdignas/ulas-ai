@@ -341,10 +341,11 @@ async function prosesAnalisis(analisisId: number): Promise<void> {
     }
 
     if (tertundaKarenaAI) {
+      const namaProvider = customConfig?.providerName || (modelAI?.startsWith("gemini") ? "Gemini" : modelAI || "AI Provider");
       await supabase.from(analisis)
         .update(toSnake({
           status: "berhenti",
-          catatan: `Analisis AI dijeda agar hasil tidak diganti dengan rating. ${tertundaKarenaAI.code}: ${tertundaKarenaAI.message}. Klik Proses ulang setelah batas Gemini pulih; hasil AI yang sudah selesai tidak akan diulang.`,
+          catatan: `Analisis AI dijeda sementara agar sisa ulasan tidak terisi rating (${tertundaKarenaAI.code}: ${tertundaKarenaAI.message}). Ulasan yang sudah selesai (${ulasanDiprosesCounter} ulasan) tersimpan aman. Tunggu sekitar 1 menit agar kuota ${namaProvider} pulih, lalu klik tombol 'Proses ulang' untuk melanjutkan.`,
         }))
         .eq("id", analisisId);
       return;
