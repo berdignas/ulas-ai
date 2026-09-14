@@ -70,8 +70,14 @@ export async function POST(req: Request) {
 
     if (aiModel === "custom" || aiModel?.startsWith("custom:")) {
       if (customAI && typeof customAI === "object" && customAI.baseUrl && customAI.model) {
-        aiApiKeyToSave = JSON.stringify(customAI);
-        aiModelToSave = `custom:${customAI.model}`;
+        const cleaned = {
+          providerName: String(customAI.providerName || "Custom AI").trim(),
+          baseUrl: String(customAI.baseUrl).trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
+          apiKey: String(customAI.apiKey || "").trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
+          model: String(customAI.model).trim(),
+        };
+        aiApiKeyToSave = JSON.stringify(cleaned);
+        aiModelToSave = `custom:${cleaned.model}`;
       }
     }
 
@@ -146,9 +152,15 @@ export async function PUT(req: Request) {
   if (aiModel !== undefined) {
     if (aiModel === "custom" || aiModel.startsWith("custom:")) {
       if (customAI && typeof customAI === "object" && customAI.baseUrl && customAI.model) {
-        updatePayload.aiModel = `custom:${customAI.model}`;
-        if (customAI.apiKey) {
-          updatePayload.aiApiKey = JSON.stringify(customAI);
+        const cleaned = {
+          providerName: String(customAI.providerName || "Custom AI").trim(),
+          baseUrl: String(customAI.baseUrl).trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
+          apiKey: String(customAI.apiKey || "").trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
+          model: String(customAI.model).trim(),
+        };
+        updatePayload.aiModel = `custom:${cleaned.model}`;
+        if (cleaned.apiKey) {
+          updatePayload.aiApiKey = JSON.stringify(cleaned);
         } else {
           // preserve existing key if user left it blank
           const { data: currentRS } = await supabase.from(rumahSakit).select("ai_api_key").eq("id", id).limit(1);
@@ -156,12 +168,12 @@ export async function PUT(req: Request) {
           if (oldConfig) {
             updatePayload.aiApiKey = JSON.stringify({
               ...oldConfig,
-              providerName: customAI.providerName || oldConfig.providerName,
-              baseUrl: customAI.baseUrl || oldConfig.baseUrl,
-              model: customAI.model || oldConfig.model,
+              providerName: cleaned.providerName || oldConfig.providerName,
+              baseUrl: cleaned.baseUrl || oldConfig.baseUrl,
+              model: cleaned.model || oldConfig.model,
             });
           } else {
-            updatePayload.aiApiKey = JSON.stringify(customAI);
+            updatePayload.aiApiKey = JSON.stringify(cleaned);
           }
         }
       } else {

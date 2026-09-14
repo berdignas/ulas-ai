@@ -103,10 +103,10 @@ export function parseCustomAIConfig(raw?: string | null): CustomAIConfig | null 
     const parsed = JSON.parse(trimmed);
     if (parsed && typeof parsed === "object" && parsed.baseUrl && parsed.model) {
       return {
-        providerName: String(parsed.providerName || parsed.provider || "Custom AI"),
-        baseUrl: String(parsed.baseUrl).replace(/\/$/, ""),
-        apiKey: String(parsed.apiKey || ""),
-        model: String(parsed.model),
+        providerName: String(parsed.providerName || parsed.provider || "Custom AI").trim(),
+        baseUrl: String(parsed.baseUrl).trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
+        apiKey: String(parsed.apiKey || "").trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
+        model: String(parsed.model).trim(),
       };
     }
   } catch {
@@ -136,9 +136,9 @@ export function resolveAIConfig(
     return {
       provider: "opencode",
       providerLabel: customConfig.providerName || "Custom AI Provider",
-      model: customConfig.model,
-      apiKey: customConfig.apiKey || "",
-      baseUrl: customConfig.baseUrl.replace(/\/$/, ""),
+      model: customConfig.model.trim(),
+      apiKey: customConfig.apiKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
+      baseUrl: customConfig.baseUrl.trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
     };
   }
 

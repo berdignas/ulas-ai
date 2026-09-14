@@ -559,8 +559,9 @@ async function callOnce(
   customConfig?: CustomAIConfig | null
 ): Promise<HasilAnalisisUlasan> {
   const env = getEnv();
-  const apiKey = customConfig?.apiKey || env.apiKey;
-  const baseUrl = (customConfig?.baseUrl || env.baseUrl).replace(/\/$/, "");
+  const rawKey = customConfig?.apiKey || env.apiKey;
+  const apiKey = rawKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+  const baseUrl = (customConfig?.baseUrl || env.baseUrl).trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, "");
   const model = overrideModel || customConfig?.model || env.model;
   await tungguGiliranNVIDIA();
   const controller = new AbortController();
@@ -686,11 +687,13 @@ export async function buatKondisiUmum(stats: {
   }
 
   const { apiKey, baseUrl, model } = config;
+  const cleanKey = apiKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+  const cleanBaseUrl = baseUrl.trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, "");
 
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await fetch(`${cleanBaseUrl}/chat/completions`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
         temperature: 0.4,

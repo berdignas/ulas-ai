@@ -9,9 +9,9 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
     const customConfig: CustomAIConfig | null = body.customAI ? {
-      providerName: body.customAI.providerName || "Custom AI Provider",
-      baseUrl: String(body.customAI.baseUrl || "").trim(),
-      apiKey: String(body.customAI.apiKey || "").trim(),
+      providerName: String(body.customAI.providerName || "Custom AI Provider").trim(),
+      baseUrl: String(body.customAI.baseUrl || "").trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
+      apiKey: String(body.customAI.apiKey || "").trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
       model: String(body.customAI.model || "").trim(),
     } : null;
 
@@ -52,15 +52,17 @@ export async function POST(req: Request) {
 
     const start = Date.now();
     const isGemini = config.provider === "gemini";
+    const cleanKey = config.apiKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+    const cleanBaseUrl = config.baseUrl.trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, "");
     const url = isGemini
-      ? `${config.baseUrl}/models/${config.model}:generateContent?key=${config.apiKey}`
-      : `${config.baseUrl}/chat/completions`;
+      ? `${cleanBaseUrl}/models/${config.model}:generateContent?key=${cleanKey}`
+      : `${cleanBaseUrl}/chat/completions`;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (!isGemini && config.apiKey) {
-      headers["Authorization"] = `Bearer ${config.apiKey}`;
+    if (!isGemini && cleanKey) {
+      headers["Authorization"] = `Bearer ${cleanKey}`;
     }
 
     const res = await fetch(url, {
@@ -79,11 +81,30 @@ export async function POST(req: Request) {
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => "");
+      let errorMessage = errorText.slice(0, 300);
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error?.message) {
+          errorMessage = parsed.error.message;
+        } else if (typeof parsed.error === "string") {
+          errorMessage = parsed.error;
+        }
+      } catch {}
+
+      let detailHint = "";
+      if (res.status === 401) {
+        detailHint = " — Kunci API (API Key) tidak valid atau salah salin.";
+      } else if (res.status === 404) {
+        detailHint = " — Endpoint URL atau nama Model tidak ditemukan di provider ini.";
+      } else if (res.status === 429) {
+        detailHint = " — Batas kuota (rate limit) provider telah tercapai.";
+      }
+
       return NextResponse.json({
         sukses: false,
         model: config.model,
         provider: config.providerLabel,
-        pesan: `${config.providerLabel} error (${res.status}): ${errorText.slice(0, 200)}`,
+        pesan: `${config.providerLabel} (${res.status}): ${errorMessage}${detailHint}`,
       });
     }
 

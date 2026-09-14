@@ -267,10 +267,17 @@ function PengaturanContent() {
     }
     setSaving(true);
     try {
+      const cleanCustomAI = isCustomAI ? {
+        providerName: customAIForm.providerName.trim() || "Custom Provider",
+        baseUrl: customAIForm.baseUrl.trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
+        apiKey: customAIForm.apiKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
+        model: customAIForm.model.trim(),
+      } : null;
+
       const payload = {
         ...form,
-        aiModel: isCustomAI ? `custom:${customAIForm.model}` : form.aiModel,
-        customAI: isCustomAI ? customAIForm : null,
+        aiModel: isCustomAI && cleanCustomAI ? `custom:${cleanCustomAI.model}` : form.aiModel,
+        customAI: cleanCustomAI,
       };
 
       if (selectedId) {
@@ -375,14 +382,16 @@ function PengaturanContent() {
     setTestingAI(true);
     setTestResult(null);
     try {
+      const cleanCustomAI = isCustomAI ? {
+        providerName: customAIForm.providerName.trim() || "Custom Provider",
+        baseUrl: customAIForm.baseUrl.trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, ""),
+        apiKey: customAIForm.apiKey.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, ""),
+        model: customAIForm.model.trim(),
+      } : null;
+
       const payload = isCustomAI
         ? {
-            customAI: {
-              providerName: customAIForm.providerName || "Custom Provider",
-              baseUrl: customAIForm.baseUrl,
-              apiKey: customAIForm.apiKey,
-              model: customAIForm.model,
-            },
+            customAI: cleanCustomAI,
             rsId: selectedId,
           }
         : { model: form.aiModel };
@@ -1005,6 +1014,18 @@ function PengaturanContent() {
                   </div>
                 </div>
               </div>
+
+              {testResult && (
+                <Alert className={cn("text-xs my-3", testResult.sukses ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-900" : "bg-rose-500/10 border-rose-500/30 text-rose-900")}>
+                  <Shield className={cn("size-4", testResult.sukses ? "text-emerald-600" : "text-rose-600")} weight="duotone" />
+                  <AlertTitle className={cn("font-semibold text-xs", testResult.sukses ? "text-emerald-900" : "text-rose-900")}>
+                    {testResult.sukses ? "Koneksi Berhasil" : "Koneksi Gagal"}
+                  </AlertTitle>
+                  <AlertDescription className={testResult.sukses ? "text-emerald-800 text-xs" : "text-rose-800 text-xs"}>
+                    {testResult.pesan}
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* Row 8: Buttons (Uji Koneksi Apify, Uji Koneksi Model AI, dan Simpan) */}
               <div className="flex flex-wrap items-center justify-end gap-3 pt-5 border-t border-border/80">
