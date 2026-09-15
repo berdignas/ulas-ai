@@ -37,16 +37,46 @@ function formatActorId(actorId: string): string {
   return trimmed;
 }
 
-async function panggilApifyActor(actorId: string, token: string, input: Record<string, unknown>): Promise<{ runId: string; defaultDatasetId: string }> {
+async function panggilApifyActor(
+  actorId: string,
+  token: string,
+  input: Record<string, unknown>,
+  fallbackInput?: Record<string, unknown>,
+): Promise<{ runId: string; defaultDatasetId: string }> {
   const safeActorId = formatActorId(actorId);
-  const res = await fetch(`${APIFY_BASE_URL}/acts/${safeActorId}/runs?token=${token}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const responseText = await res.text();
-  console.log('[Apify] Start actor response:', res.status, responseText.slice(0, 500));
+  const startRun = async (payload: Record<string, unknown>) => {
+    const response = await fetch(`${APIFY_BASE_URL}/acts/${safeActorId}/runs?token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    console.log('[Apify] Start actor response:', response.status, text.slice(0, 500));
+    return { response, text };
+  };
+
+  let { response: res, text: responseText } = await startRun(input);
+
+  // Some Apify actors use `urls: string[]` instead of Compass' `startUrls`.
+  // Retry only for this specific schema error so other validation failures are
+  // surfaced immediately and no duplicate actor run can be created.
+  if (
+    !res.ok &&
+    fallbackInput &&
+    res.status === 400 &&
+    /input\.urls\s+is required/i.test(responseText)
+  ) {
+    console.warn(`[Apify] Actor ${actorId} meminta input.urls; mencoba payload kompatibel.`);
+    ({ response: res, text: responseText } = await startRun(fallbackInput));
+  }
+
   if (!res.ok) {
+    if (/input\.urls\s+is required/i.test(responseText)) {
+      throw new Error(
+        `Apify actor start gagal: ${res.status} ${responseText || '(empty body)'}. ` +
+        `Actor "${actorId}" memerlukan field urls; periksa Actor ID dan skema input di pengaturan.`
+      );
+    }
     throw new Error(`Apify actor start gagal: ${res.status} ${responseText || '(empty body)'}`);
   }
   if (!responseText) throw new Error('Apify response body kosong');
@@ -254,7 +284,20 @@ export async function jalankanSinkronHarian(
       input.placeIds = [targetPlace];
     }
 
-    const { runId, defaultDatasetId: datasetIdAwal } = await panggilApifyActor(rs.apifyActorId!, rs.apifyToken!, input);
+    const inputWithUrls: Record<string, unknown> = {
+      urls: [targetUrl],
+      maxReviews,
+      oneReviewPerRow: true,
+      sort: "newest",
+      language: "id",
+    };
+
+    const { runId, defaultDatasetId: datasetIdAwal } = await panggilApifyActor(
+      rs.apifyActorId!,
+      rs.apifyToken!,
+      input,
+      inputWithUrls,
+    );
     await tungguRunSelesai(rs.apifyActorId!, runId, rs.apifyToken!);
     const rawItems = await ambilDatasetItems(datasetIdAwal, rs.apifyToken!);
 
