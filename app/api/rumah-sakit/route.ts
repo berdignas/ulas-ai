@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     }
 
     let aiApiKeyToSave: string | null = null;
-    let aiModelToSave: string = aiModel ?? "gemini-3.5-flash-lite";
+    let aiModelToSave: string = aiModel ?? "gemini-3.8-flash";
 
     if (aiModel === "custom" || aiModel?.startsWith("custom:")) {
       if (customAI && typeof customAI === "object" && customAI.baseUrl && customAI.model) {

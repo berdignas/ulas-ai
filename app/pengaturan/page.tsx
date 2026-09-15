@@ -80,7 +80,7 @@ function PengaturanContent() {
     aktif: true,
     zonaWaktu: "Asia/Jakarta",
     jamSinkron: 6,
-    aiModel: "gemini-3.5-flash-lite",
+    aiModel: "gemini-3.8-flash",
   });
 
   const [isCustomAI, setIsCustomAI] = useState(false);
@@ -117,7 +117,7 @@ function PengaturanContent() {
       const normalizeModel = (model?: string | null) =>
         options.some((item) => item.id === model)
           ? model!
-          : modelData.defaultModel || options.find((item) => item.configured)?.id || "gemini-2.0-flash";
+          : modelData.defaultModel || options.find((item) => item.configured)?.id || "gemini-3.8-flash";
       setRumahSakitList(list);
       setModelOptions(options);
       setModelsLoading(false);
@@ -217,7 +217,7 @@ function PengaturanContent() {
       jamSinkron: rs.jamSinkron ?? 6,
       aiModel: modelOptions.some((model) => model.id === rs.aiModel)
         ? rs.aiModel!
-        : modelOptions.find((model) => model.configured)?.id || "gemini-2.0-flash",
+        : modelOptions.find((model) => model.configured)?.id || "gemini-3.8-flash",
     });
     if (rs.aiModel && typeof window !== "undefined") {
       localStorage.setItem("ulas_ai_model", rs.aiModel);
@@ -246,7 +246,7 @@ function PengaturanContent() {
       aktif: true,
       zonaWaktu: "Asia/Jakarta",
       jamSinkron: 6,
-      aiModel: modelOptions.find((model) => model.configured)?.id || "gemini-2.0-flash",
+      aiModel: modelOptions.find((model) => model.configured)?.id || "gemini-3.8-flash",
     });
     setLastAction(null);
     setTestResult(null);
@@ -728,7 +728,7 @@ function PengaturanContent() {
                         onClick={() =>
                           setForm((prev) => ({
                             ...prev,
-                            aiModel: "gemini-2.0-flash",
+                            aiModel: "gemini-3.8-flash",
                           }))
                         }
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -737,7 +737,7 @@ function PengaturanContent() {
                             : "bg-background border-border text-foreground hover:bg-muted"
                         }`}
                       >
-                        Gemini 2.0 Flash
+                        Gemini 3.8 Flash
                       </button>
                     </div>
 
@@ -772,7 +772,7 @@ function PengaturanContent() {
                       </div>
                     </div>
                     <p className="text-[11px] text-muted-foreground">
-                      Pilihan model bawaan menggunakan kredensial API key yang dikonfigurasi di server.
+                      Pilihan model bawaan menggunakan <code className="font-mono">GEMINI_API_KEY</code> dari environment server (format lama <code className="font-mono">AIzaSy…</code> maupun format baru <code className="font-mono">AQ.…</code> didukung). Restart server setelah mengubah key.
                     </p>
                   </div>
                 ) : (

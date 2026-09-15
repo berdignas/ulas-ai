@@ -20,30 +20,31 @@ export interface AIExecutionConfig {
 
 const GEMINI_MODELS = [
   {
-    id: "gemini-2.0-flash",
-    label: "Gemini 2.0 Flash",
-    description: "Model resmi Google terbaru, cepat dan hemat untuk analisis ulasan.",
+    id: "gemini-3.8-flash",
+    label: "Gemini 3.8 Flash",
+    description: "Model Gemini terbaru untuk analisis ulasan yang cepat dan cerdas.",
     profile: "cepat" as const,
   },
   {
-    id: "gemini-1.5-flash",
-    label: "Gemini 1.5 Flash",
-    description: "Stabil dan efisien untuk pemrosesan ulasan dalam jumlah besar.",
+    id: "gemini-3.6-flash",
+    label: "Gemini 3.6 Flash",
+    description: "Model stabil dengan kemampuan multimodal dan output terstruktur.",
     profile: "seimbang" as const,
   },
   {
-    id: "gemini-1.5-pro",
-    label: "Gemini 1.5 Pro",
-    description: "Penalaran mendalam untuk ulasan panjang dan kompleks.",
+    id: "gemini-3.5-flash",
+    label: "Gemini 3.5 Flash",
+    description: "Model seimbang untuk pemrosesan ulasan dalam jumlah besar.",
     profile: "mendalam" as const,
   },
 ];
 
 function providerKey(provider: AIProvider): string {
   if (provider === "gemini") {
-    const key = process.env.GEMINI_API_KEY?.trim() ?? "";
-    // Hanya valid jika diawali AIzaSy (kunci resmi Google AI Studio)
-    return key.startsWith("AIzaSy") ? key : "";
+    // Gemini kini menerbitkan standard key (AIzaSy...) dan authorization key
+    // baru (AQ...). Jangan mengunci validasi pada prefix tertentu karena kedua
+    // format tersebut didukung oleh endpoint Gemini API.
+    return process.env.GEMINI_API_KEY?.trim().replace(/^Bearer\s+/i, "").replace(/^['"]|['"]$/g, "") ?? "";
   }
   if (provider === "nvidia") {
     const key = process.env.NVIDIA_API_KEY?.trim() ?? "";
@@ -120,7 +121,7 @@ function normalizeLegacyModel(model?: string | null): string | null {
   const value = model?.trim();
   if (!value) return null;
   if (/gemini|antigravity/i.test(value) && !value.startsWith("gemini-")) {
-    return process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite";
+    return process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   }
   if (/nvidia|nemotron/i.test(value) && !getAIModelOptions().some((item) => item.id === value)) {
     return process.env.NVIDIA_MODEL?.trim() || null;
@@ -145,7 +146,7 @@ export function resolveAIConfig(
 
   const options = getAIModelOptions();
   const normalized = normalizeLegacyModel(preferredModel);
-  const defaultGemini = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
+  const defaultGemini = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const defaultOption = options.find((item) => item.id === defaultGemini);
   const selected =
     (normalized ? options.find((item) => item.id === normalized) : undefined) ??

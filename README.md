@@ -38,11 +38,11 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-3.5-flash-lite
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
-Model dapat diganti dari halaman Pengaturan. Gunakan `gemini-3.5-flash-lite` untuk throughput
-tertinggi atau `gemini-3.5-flash` untuk analisis yang lebih teliti. Restart `npm run dev` setiap
+Model dapat diganti dari halaman Pengaturan. Gunakan `gemini-3.8-flash` untuk kualitas dan kecepatan
+  terbaru atau `gemini-3.6-flash` untuk model stabil. Restart `npm run dev` setiap
 kali isi `.env` berubah.
 
 Pengaturan performa opsional:
