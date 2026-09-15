@@ -1,6 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { supabase, toCamel } from "@/lib/db";
-import { analisis, AnalisisRow } from "@/lib/db/schema";
+import { analisis, ulasan, AnalisisRow } from "@/lib/db/schema";
 import { mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
@@ -19,6 +19,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
+  const { count: totalUlasanAktual, error: totalUlasanError } = await supabase
+    .from(ulasan)
+    .select("id", { count: "exact", head: true })
+    .eq("analisis_id", analisisId);
+  const totalUlasan = totalUlasanError || totalUlasanAktual === null
+    ? Math.max(item.totalUlasan, item.ulasanDiproses ?? 0)
+    : totalUlasanAktual;
+
   // Jika instance worker berakhir sebelum semua batch selesai, polling berikutnya
   // memulai kembali dari checkpoint di database. Ulasan dengan sumber_label terisi
   // tidak diproses ulang, sehingga aman dijalankan di localhost maupun serverless.
@@ -34,11 +42,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
   return NextResponse.json({
     status: item.status,
-    totalUlasan: item.totalUlasan,
-    // Hanya status selesai yang boleh ditampilkan 100%. Status gagal tetap memakai
-    // checkpoint agar UI tidak mengklaim seluruh ulasan sudah diproses.
-    ulasanDiproses: item.status === "selesai" ? item.totalUlasan : item.ulasanDiproses,
-    sisaUlasan: item.status === "selesai" ? 0 : Math.max(0, item.totalUlasan - item.ulasanDiproses),
+    totalUlasan,
+    // Batasi checkpoint terhadap total aktual agar UI tidak pernah menampilkan
+    // lebih dari jumlah ulasan yang benar-benar tersimpan.
+    ulasanDiproses: Math.min(totalUlasan, item.ulasanDiproses),
+    sisaUlasan: Math.max(0, totalUlasan - item.ulasanDiproses),
     catatan: item.catatan,
   });
 }

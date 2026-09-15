@@ -18,6 +18,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
+  const { count: totalUlasanAktual, error: totalUlasanError } = await supabase
+    .from(ulasan)
+    .select("id", { count: "exact", head: true })
+    .eq("analisis_id", analisisId);
+  const totalUlasan = totalUlasanError || totalUlasanAktual === null
+    ? Math.max(item.totalUlasan, item.ulasanDiproses ?? 0)
+    : totalUlasanAktual;
+
   const { count: totalTerlabel } = await supabase
     .from(ulasan)
     .select("*", { count: "exact", head: true })
@@ -25,7 +33,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     .not("sentimen", "is", null);
 
   return NextResponse.json({
-    analisis: item,
+    analisis: { ...item, totalUlasan },
     totalTerlabel: totalTerlabel ?? 0,
   });
 }

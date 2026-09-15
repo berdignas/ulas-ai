@@ -21,6 +21,14 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
+  const { count: totalUlasanAktual, error: totalUlasanError } = await supabase
+    .from(ulasan)
+    .select("id", { count: "exact", head: true })
+    .eq("analisis_id", analisisId);
+  const totalUlasan = totalUlasanError || totalUlasanAktual === null
+    ? Math.max(item.totalUlasan, item.ulasanDiproses ?? 0)
+    : totalUlasanAktual;
+
   const { data: konfigurasiRS } = await supabase
     .from(rumahSakit)
     .select("ai_model, ai_api_key")
@@ -42,9 +50,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
           ? { error: "Analisis sebelumnya masih sedang diakhiri. Coba lagi beberapa saat." }
           : {}),
         status: sedangDihentikan ? "berhenti" : "berjalan",
-        totalUlasan: item.totalUlasan,
+        totalUlasan,
         ulasanDiproses: checkpointSaatIni,
-        sisaUlasan: Math.max(0, item.totalUlasan - checkpointSaatIni),
+        sisaUlasan: Math.max(0, totalUlasan - checkpointSaatIni),
         pesan: sedangDihentikan
           ? "Analisis sebelumnya masih sedang diakhiri. Coba lagi beberapa saat."
           : "Analisis sedang diproses.",
@@ -61,7 +69,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
         .not("sumber_label", "is", null)
     : { count: 0 };
   let checkpoint = jumlahSudahDianalisis ?? item.ulasanDiproses ?? 0;
-  let sisaUlasan = Math.max(0, item.totalUlasan - checkpoint);
+  let sisaUlasan = Math.max(0, totalUlasan - checkpoint);
 
   // Data yang dihentikan oleh versi lama belum selalu mempunyai agregat hasil.
   // Bangun ringkasan parsial terlebih dahulu agar hasil lama langsung terlihat
@@ -70,7 +78,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     try {
       const ringkasanParsial = await finalisasiAnalisisDihentikan(
         analisisId,
-        item.totalUlasan,
+        totalUlasan,
         "Hasil analisis sebelumnya dipertahankan"
       );
       checkpoint = ringkasanParsial.ulasanDiproses;
@@ -85,7 +93,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       status: "selesai",
       pakaiAI,
       model: modelAI,
-      totalUlasan: item.totalUlasan,
+      totalUlasan,
       ulasanDiproses: checkpoint,
       sisaUlasan: 0,
       pesan: "Seluruh ulasan sudah dianalisis. Tidak ada ulasan tersisa.",
@@ -121,7 +129,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     status: "berjalan",
     pakaiAI,
     model: modelAI,
-    totalUlasan: item.totalUlasan,
+    totalUlasan,
     ulasanDiproses: checkpoint,
     sisaUlasan,
     pesan: !pakaiAI

@@ -187,6 +187,7 @@ export async function finalisasiAnalisisDihentikan(
   const { error } = await supabase.from(analisis)
     .update(toSnake({
       status,
+      totalUlasan,
       ulasanDiproses: ringkasan.ulasanDiproses,
       totalPositif: ringkasan.totalPositif,
       totalNegatif: ringkasan.totalNegatif,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel } from "@/lib/db";
-import { analisis, AnalisisRow } from "@/lib/db/schema";
+import { analisis, ulasan, AnalisisRow } from "@/lib/db/schema";
 import { finalisasiAnalisisDihentikan, hentikanProsesAnalisis } from "@/lib/analyzer";
 import { toSnake } from "@/lib/db";
 
@@ -18,6 +18,14 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   if (!item) {
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
+
+  const { count: totalUlasanAktual, error: totalUlasanError } = await supabase
+    .from(ulasan)
+    .select("id", { count: "exact", head: true })
+    .eq("analisis_id", analisisId);
+  const totalUlasan = totalUlasanError || totalUlasanAktual === null
+    ? Math.max(item.totalUlasan, item.ulasanDiproses ?? 0)
+    : totalUlasanAktual;
 
   if (item.status !== "berjalan") {
     return NextResponse.json({ error: "Tidak ada proses analisis yang sedang berjalan." }, { status: 409 });
@@ -37,12 +45,12 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const hasil = await finalisasiAnalisisDihentikan(
       analisisId,
-      item.totalUlasan,
+      totalUlasan,
       "Analisis dihentikan oleh pengguna"
     );
     return NextResponse.json({
       status: hasil.status,
-      totalUlasan: item.totalUlasan,
+      totalUlasan,
       ulasanDiproses: hasil.ulasanDiproses,
       sisaUlasan: hasil.sisaUlasan,
       pesan: hasil.sisaUlasan > 0
@@ -53,9 +61,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     console.error("[ai] gagal menyiapkan ringkasan parsial:", finalisasiError);
     return NextResponse.json({
       status: "berhenti",
-      totalUlasan: item.totalUlasan,
+      totalUlasan,
       ulasanDiproses: item.ulasanDiproses,
-      sisaUlasan: Math.max(0, item.totalUlasan - item.ulasanDiproses),
+      sisaUlasan: Math.max(0, totalUlasan - item.ulasanDiproses),
       pesan: "Analisis dihentikan. Muat ulang dashboard untuk melihat hasil parsial terbaru.",
     });
   }
