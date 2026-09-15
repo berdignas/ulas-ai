@@ -155,6 +155,14 @@ async function hitungRingkasanAnalisis(analisisId: number): Promise<RingkasanAna
   };
 }
 
+async function ambilTotalUlasanAktual(analisisId: number, fallback: number): Promise<number> {
+  const { count, error } = await supabase
+    .from(ulasan)
+    .select("id", { count: "exact", head: true })
+    .eq("analisis_id", analisisId);
+  return error || count === null ? fallback : count;
+}
+
 export async function finalisasiAnalisisDihentikan(
   analisisId: number,
   totalUlasan: number,
@@ -468,33 +476,36 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
 
     if (tertundaKarenaAI) {
       const namaProvider = customConfig?.providerName || (modelAI?.startsWith("gemini") ? "Gemini" : modelAI || "AI Provider");
+      const totalUlasanAktual = await ambilTotalUlasanAktual(analisisId, daftarUlasan.length);
       await finalisasiAnalisisDihentikan(
         analisisId,
-        daftarUlasan.length,
+        totalUlasanAktual,
         `Analisis dihentikan otomatis karena ${namaProvider} belum dapat melanjutkan permintaan (${tertundaKarenaAI.code}: ${tertundaKarenaAI.message})`
       );
       return;
     }
 
     if (terhentiTanpaKemajuan) {
+      const totalUlasanAktual = await ambilTotalUlasanAktual(analisisId, daftarUlasan.length);
       await finalisasiAnalisisDihentikan(
         analisisId,
-        daftarUlasan.length,
+        totalUlasanAktual,
         `Analisis dihentikan karena ${terhentiTanpaKemajuan}`
       );
       return;
     }
 
     if (await adaPermintaanBerhenti(analisisId)) {
+      const totalUlasanAktual = await ambilTotalUlasanAktual(analisisId, daftarUlasan.length);
       await finalisasiAnalisisDihentikan(
         analisisId,
-        daftarUlasan.length,
+        totalUlasanAktual,
         "Analisis dihentikan oleh pengguna"
       );
       return;
     }
 
-    const totalUlasan = daftarUlasan.length;
+    const totalUlasan = await ambilTotalUlasanAktual(analisisId, daftarUlasan.length);
     const ringkasan = await hitungRingkasanAnalisis(analisisId);
     const sisaUlasan = Math.max(0, totalUlasan - ringkasan.ulasanDiproses);
 

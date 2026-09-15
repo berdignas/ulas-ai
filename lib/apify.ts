@@ -161,11 +161,18 @@ function extractTanggalApify(r: Record<string, unknown>): { iso: string; dateObj
 
 function extractReviewData(r: Record<string, unknown>) {
   const userObj = typeof r.user === "object" && r.user !== null ? (r.user as Record<string, unknown>) : null;
+  const authorObj = typeof r.author === "object" && r.author !== null ? (r.author as Record<string, unknown>) : null;
+  const reviewerObj = typeof r.reviewer === "object" && r.reviewer !== null ? (r.reviewer as Record<string, unknown>) : null;
   const namaPengulas =
     (typeof r.name === "string" && r.name.trim()) ||
+    (typeof authorObj?.name === "string" && authorObj.name.trim()) ||
+    (typeof authorObj?.displayName === "string" && authorObj.displayName.trim()) ||
+    (typeof reviewerObj?.name === "string" && reviewerObj.name.trim()) ||
     (typeof r.authorName === "string" && r.authorName.trim()) ||
+    (typeof r.author_name === "string" && r.author_name.trim()) ||
     (typeof r.authorTitle === "string" && r.authorTitle.trim()) ||
     (typeof r.reviewerName === "string" && r.reviewerName.trim()) ||
+    (typeof r.reviewer_name === "string" && r.reviewer_name.trim()) ||
     (userObj && typeof userObj.name === "string" && userObj.name.trim()) ||
     (typeof r.author === "string" && r.author.trim()) ||
     "Pengulas Google";
@@ -278,6 +285,7 @@ export async function jalankanSinkronHarian(
       oneReviewPerRow: true,
       sort: "newest",
       language: "id",
+      personalData: true,
     };
 
     if (!targetPlace.startsWith("http")) {
@@ -290,6 +298,7 @@ export async function jalankanSinkronHarian(
       oneReviewPerRow: true,
       sort: "newest",
       language: "id",
+      personalData: true,
     };
 
     const { runId, defaultDatasetId: datasetIdAwal } = await panggilApifyActor(
@@ -348,8 +357,16 @@ export async function jalankanSinkronHarian(
     }
 
     if (analisisAktif) {
+      const { count: totalUlasanAktual, error: totalUlasanError } = await supabase
+        .from(ulasan)
+        .select("id", { count: "exact", head: true })
+        .eq("analisis_id", analisisAktif.id);
+      const totalUlasan = totalUlasanError || totalUlasanAktual === null
+        ? (analisisAktif.totalUlasan || 0) + ulasanBaru
+        : totalUlasanAktual;
+
       await supabase.from(analisis)
-        .update(toSnake({ totalUlasan: (analisisAktif.totalUlasan || 0) + ulasanBaru, status: "berjalan" }))
+        .update(toSnake({ totalUlasan, status: "berjalan" }))
         .eq("id", analisisAktif.id);
 
       // OTOMATIS JALANKAN ANALISIS ASPEK & SENTIMEN NVIDIA AI

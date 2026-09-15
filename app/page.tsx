@@ -778,10 +778,10 @@ export default function DashboardPage() {
 
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Stat
-              label={hasilParsial ? "Sudah Dianalisis" : "Total Ulasan"}
-              value={hasilParsial ? aktif.ulasanDiproses : aktif.totalUlasan}
+              label="Total Ulasan"
+              value={aktif.totalUlasan}
               sub={hasilParsial
-                ? `dari ${aktif.totalUlasan} ulasan · ${sisaUlasan} tersisa`
+                ? `${aktif.ulasanDiproses} dianalisis · ${sisaUlasan} tersisa`
                 : durasiTercatat
                   ? `dianalisis dlm ${durasiTercatat}`
                   : "seluruh data terunggah"}

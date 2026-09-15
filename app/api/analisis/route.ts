@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel, getSqlClient } from "@/lib/db";
-import { analisis, aspek, AnalisisRow } from "@/lib/db/schema";
+import { analisis, aspek, ulasan, AnalisisRow } from "@/lib/db/schema";
 import { adaProsesBerjalan } from "@/lib/analyzer";
 
 export const runtime = "nodejs";
@@ -12,7 +12,17 @@ export async function GET() {
     .order("tanggal_unggah", { ascending: false });
 
   if (data) {
-    return NextResponse.json({ analisis: toCamel<AnalisisRow[]>(data) });
+    const daftar = toCamel<AnalisisRow[]>(data);
+    const daftarDenganTotalAktual = await Promise.all(
+      daftar.map(async (item) => {
+        const { count, error: countError } = await supabase
+          .from(ulasan)
+          .select("id", { count: "exact", head: true })
+          .eq("analisis_id", item.id);
+        return countError || count === null ? item : { ...item, totalUlasan: count };
+      })
+    );
+    return NextResponse.json({ analisis: daftarDenganTotalAktual });
   }
 
   // Fallback to direct PostgreSQL query if Supabase REST API key is invalid/placeholder
