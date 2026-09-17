@@ -274,7 +274,6 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
     let gagalDilabel = 0;
     let gagalAI = 0;
     let pakaiAI = sudahDiproses.some((item) => item.sumberLabel === "ai");
-    let tertundaKarenaAI: ReturnType<typeof getAIErrorInfo> | null = null;
     let errorAITerakhir: ReturnType<typeof getAIErrorInfo> | null = null;
     let terhentiTanpaKemajuan: string | null = null;
     const cacheAspek = new Map<string, number>();
@@ -369,7 +368,12 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
           errorAITerakhir = info;
           console.warn(`[ai] batch ${batchIndex + 1}/${batches.length} gagal (${info.code}): ${info.message}`);
           if (info.retryable) {
-            tertundaKarenaAI = info;
+            // Jangan menghentikan seluruh analisis hanya karena Gemini sedang
+            // rate-limit/high demand. Batch tetap disimpan melalui fallback
+            // rating di simpanSatuUlasan; ulasan tanpa rating akan tetap
+            // dihitung sebagai sisa untuk percobaan berikutnya.
+            gagalAI += batch.length;
+            errorPermanenBatch = info;
             if (schemaV3Tersedia) {
               await Promise.all(batch.map((item) => supabase.from(ulasan)
                 .update(toSnake({
@@ -380,10 +384,10 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
                 }))
                 .eq("id", item.id)));
             }
-            break;
+          } else {
+            gagalAI += batch.length;
+            errorPermanenBatch = info;
           }
-          gagalAI += batch.length;
-          errorPermanenBatch = info;
         }
       }
 
@@ -473,17 +477,6 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       console.info(
         `[ai] analisis ${analisisId}, batch ${batchIndex + 1}/${batches.length}: ${batch.length} ulasan dalam ${Date.now() - mulaiBatch}ms`
       );
-    }
-
-    if (tertundaKarenaAI) {
-      const namaProvider = customConfig?.providerName || (modelAI?.startsWith("gemini") ? "Gemini" : modelAI || "AI Provider");
-      const totalUlasanAktual = await ambilTotalUlasanAktual(analisisId, daftarUlasan.length);
-      await finalisasiAnalisisDihentikan(
-        analisisId,
-        totalUlasanAktual,
-        `Analisis dihentikan otomatis karena ${namaProvider} belum dapat melanjutkan permintaan (${tertundaKarenaAI.code}: ${tertundaKarenaAI.message})`
-      );
-      return;
     }
 
     if (terhentiTanpaKemajuan) {
