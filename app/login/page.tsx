@@ -164,11 +164,6 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            {/* Hint Akun Default */}
-            <div className="mt-5 rounded-xl bg-muted/40 border border-border/30 p-3 text-center text-xs text-muted-foreground">
-              Akun awal: <span className="font-mono font-semibold text-foreground">admin</span> /{" "}
-              <span className="font-mono font-semibold text-foreground">adminrs123</span>
-            </div>
           </div>
 
           {/* Footer Note (Seperti teks kecil di bawah referensi) */}
