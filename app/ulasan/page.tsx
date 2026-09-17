@@ -144,14 +144,15 @@ export default function UlasanPage() {
         </div>
       ) : (
         <div className="reveal overflow-hidden rounded-xl border border-border bg-card">
-          <Table className="text-xs">
+          <div className="max-h-[min(68dvh,720px)] overflow-auto">
+          <Table className="text-sm">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-40">Pengulas</TableHead>
-                <TableHead className="w-16">Rating</TableHead>
-                <TableHead>Ulasan</TableHead>
-                <TableHead className="w-28">Sentimen</TableHead>
-                <TableHead className="w-28">Tanggal</TableHead>
+                <TableHead className="sticky top-0 z-10 w-40 bg-card">Pengulas</TableHead>
+                <TableHead className="sticky top-0 z-10 w-16 bg-card">Rating</TableHead>
+                <TableHead className="sticky top-0 z-10 bg-card">Ulasan</TableHead>
+                <TableHead className="sticky top-0 z-10 w-28 bg-card">Sentimen</TableHead>
+                <TableHead className="sticky top-0 z-10 w-28 bg-card">Tanggal</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -167,8 +168,19 @@ export default function UlasanPage() {
                     <TableCell className="font-mono tabular-nums text-xs">
                       {item.rating !== null ? <Bintang nilai={item.rating} /> : "-"}
                     </TableCell>
-                    <TableCell className={cn("max-w-xl text-xs", !terbuka && "truncate")}>
-                      {item.teksUlasan}
+                    <TableCell className="min-w-[min(420px,48vw)] max-w-[min(760px,58vw)] align-top">
+                      <div
+                        onClick={(event) => event.stopPropagation()}
+                        className={cn(
+                          "text-sm leading-6 whitespace-pre-wrap break-words",
+                          terbuka
+                            ? "max-h-52 overflow-y-auto pr-3 [scrollbar-gutter:stable]"
+                            : "line-clamp-3"
+                        )}
+                        title={terbuka ? undefined : "Klik baris untuk membaca ulasan lengkap"}
+                      >
+                        {item.teksUlasan}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <SentimentBadge value={item.sentimen} />
@@ -179,6 +191,7 @@ export default function UlasanPage() {
               })}
             </TableBody>
           </Table>
+          </div>
           <div className="flex items-center justify-between border-t border-border px-6 py-3 text-xs">
             <span className="text-xs text-muted-foreground">
               <span className="font-mono tabular-nums">{total}</span> ulasan ditemukan · halaman{" "}
