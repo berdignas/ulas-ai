@@ -844,7 +844,7 @@ export default function JurnalPage() {
 
       {/* Modal Dialog Lihat Detail Ulasan */}
       <Dialog open={!!selectedUlasanDetail} onOpenChange={(open) => !open && setSelectedUlasanDetail(null)}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)] max-w-xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center justify-between gap-2 pr-6">
               <span>Detail Ulasan</span>
@@ -861,7 +861,8 @@ export default function JurnalPage() {
           </DialogHeader>
 
           {selectedUlasanDetail && (
-            <div className="space-y-4 pt-2">
+            <div className="min-h-0 overflow-y-auto pr-1">
+              <div className="space-y-4 pt-2">
               {/* Crisis Alert Banner */}
               {selectedUlasanDetail.faktorUrgensiMedis && (
                 <div className="flex items-center gap-2.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5">
@@ -891,7 +892,7 @@ export default function JurnalPage() {
 
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold uppercase text-muted-foreground tracking-wider">Teks Ulasan Lengkap</label>
-                <div className="p-3.5 bg-muted/30 rounded-lg text-xs leading-relaxed text-foreground whitespace-pre-wrap border">
+                <div className="p-3.5 bg-muted/30 rounded-lg text-sm leading-6 text-foreground whitespace-pre-wrap border">
                   {selectedUlasanDetail.teksUlasan || "(Ulasan tanpa teks)"}
                 </div>
               </div>
@@ -920,6 +921,7 @@ export default function JurnalPage() {
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
 
