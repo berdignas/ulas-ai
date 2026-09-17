@@ -25,7 +25,8 @@ export interface SinkronResult {
   pesanError?: string;
 }
 
-export type PeriodeScraping = "1d" | "1w" | "1m" | "1y";
+import { SCRAPING_PERIODS, type PeriodeScraping } from "./scraping-periods";
+export type { PeriodeScraping } from "./scraping-periods";
 
 const APIFY_BASE_URL = "https://api.apify.com/v2";
 
@@ -225,29 +226,17 @@ export async function jalankanSinkronHarian(
   try {
     const sekarang = new Date();
     
-    // Konfigurasi batas waktu & maxReviews berdasarkan periode scraping
-    let msPeriode = 24 * 60 * 60 * 1000; // default 1 hari
-    let maxReviews = 20;
-
-    if (periode === "1w") {
-      msPeriode = 7 * 24 * 60 * 60 * 1000; // 1 minggu
-      maxReviews = 100;
-    } else if (periode === "1m") {
-      msPeriode = 30 * 24 * 60 * 60 * 1000; // 1 bulan
-      maxReviews = 300;
-    } else if (periode === "1y") {
-      msPeriode = 365 * 24 * 60 * 60 * 1000; // 1 tahun
-      maxReviews = 1000;
+    const konfigurasi = SCRAPING_PERIODS.find((item) => item.value === periode);
+    if (!konfigurasi) throw new Error("Periode penarikan tidak valid.");
+    const maxReviews = konfigurasi.maxReviews;
+    const batasWaktu = new Date(sekarang.getTime() - konfigurasi.days * 24 * 60 * 60 * 1000);
+    // Gunakan tahun kalender agar tanggal batas tetap tepat saat melewati tahun kabisat.
+    if (periode.endsWith("y")) {
+      batasWaktu.setTime(sekarang.getTime());
+      const bulan = batasWaktu.getUTCMonth();
+      batasWaktu.setUTCFullYear(batasWaktu.getUTCFullYear() - Number(periode.slice(0, -1)));
+      if (batasWaktu.getUTCMonth() !== bulan) batasWaktu.setUTCDate(0);
     }
-
-    const batasWaktu = new Date(sekarang.getTime() - msPeriode);
-
-    const labelPeriodeMap: Record<PeriodeScraping, string> = {
-      "1d": "1 Hari",
-      "1w": "1 Minggu",
-      "1m": "1 Bulan",
-      "1y": "1 Tahun",
-    };
 
     const { data: existingAnalisisRaw } = await supabase.from(analisis)
       .select("*")
@@ -261,7 +250,7 @@ export async function jalankanSinkronHarian(
       const { data: baruRaw, error: baruErr } = await supabase.from(analisis)
         .insert(toSnake({
           rumahSakitId,
-          namaFile: `Sinkron Apify (${labelPeriodeMap[periode]}) ${sekarang.toISOString().split("T")[0]}`,
+          namaFile: `Sinkron Apify (${konfigurasi.label}) ${sekarang.toISOString().split("T")[0]}`,
           tanggalUnggah: sekarang.toISOString(),
           status: "berjalan",
         }))

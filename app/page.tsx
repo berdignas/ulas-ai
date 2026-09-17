@@ -1,4 +1,5 @@
 "use client";
+import { SCRAPING_PERIODS, type PeriodeScraping } from "@/lib/scraping-periods";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -323,7 +324,7 @@ export default function DashboardPage() {
     return () => clearTimeout(timer);
   }, [konfirmasi]);
 
-  const handleSync = async (periode: "1d" | "1w" | "1m" | "1y") => {
+  const handleSync = async (periode: PeriodeScraping) => {
     if (!rumahSakitId) return;
     setSyncLoading(true);
     setPesanAksi(null);
@@ -438,18 +439,11 @@ export default function DashboardPage() {
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuLabel>Periode Penarikan</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handleSync("1d")} className="cursor-pointer">
-                1 Hari
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleSync("1w")} className="cursor-pointer">
-                1 Minggu
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleSync("1m")} className="cursor-pointer">
-                1 Bulan
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleSync("1y")} className="cursor-pointer">
-                1 Tahun
-              </DropdownMenuItem>
+              {SCRAPING_PERIODS.map((period) => (
+                <DropdownMenuItem key={period.value} onClick={() => handleSync(period.value)} className="cursor-pointer">
+                  {period.label}
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -541,18 +535,11 @@ export default function DashboardPage() {
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuLabel>Periode Penarikan</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => handleSync("1d")} className="cursor-pointer">
-              1 Hari
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleSync("1w")} className="cursor-pointer">
-              1 Minggu
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleSync("1m")} className="cursor-pointer">
-              1 Bulan
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleSync("1y")} className="cursor-pointer">
-              1 Tahun
-            </DropdownMenuItem>
+            {SCRAPING_PERIODS.map((period) => (
+              <DropdownMenuItem key={period.value} onClick={() => handleSync(period.value)} className="cursor-pointer">
+                {period.label}
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
 

@@ -1,4 +1,5 @@
 "use client";
+import { SCRAPING_PERIODS, type PeriodeScraping } from "@/lib/scraping-periods";
 
 import { useEffect, useState, useCallback } from "react";
 import { format } from "date-fns";
@@ -220,12 +221,12 @@ export default function JurnalPage() {
     );
   }, [lastSyncDate]);
 
-  const handleSync = async () => {
+  const handleSync = async (periode: PeriodeScraping = "1d") => {
     if (!rumahSakitId) return;
     setSyncAlertMessage(null);
 
     // Cek apakah hari ini sudah pernah dilakukan penarikan data
-    if (isSyncedToday()) {
+    if (periode === "1d" && isSyncedToday()) {
       setSyncAlertMessage("Hari ini sudah dilakukan penarikan data.");
       return;
     }
@@ -235,11 +236,11 @@ export default function JurnalPage() {
       const res = await fetch("/api/sinkron", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rumahSakitId, tipePemicu: "manual", periode: "1d" }),
+        body: JSON.stringify({ rumahSakitId, tipePemicu: "manual", periode }),
       });
       const data = await res.json();
       if (data.sukses) {
-        alert(`Sinkronisasi harian selesai. ${data.ulasanBaru} ulasan baru ditemukan.`);
+        alert(`Penarikan data selesai. ${data.ulasanBaru} ulasan baru ditemukan.`);
         fetchData();
         fetchStatistik();
         fetchKrisisCount();
@@ -484,10 +485,21 @@ export default function JurnalPage() {
           </div>
 
           {/* Tarik Data Button Moved to Far Right */}
-          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncLoading} className="h-9 px-3.5 gap-2 text-xs font-medium">
+          <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" disabled={syncLoading} className="h-9 px-3.5 gap-2 text-xs font-medium">
             <ArrowsClockwise className={cn("size-3.5", syncLoading && "animate-spin")} weight="duotone" />
             <span>Tarik Data</span>
           </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {SCRAPING_PERIODS.map((period) => (
+              <DropdownMenuItem key={period.value} onClick={() => handleSync(period.value)} className="cursor-pointer">
+                {period.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
