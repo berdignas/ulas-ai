@@ -17,9 +17,10 @@ import {
   BorderStyle,
   PageOrientation,
 } from "docx";
-import PDFDocument from "pdfkit";
+import { renderReportPdf } from "@/lib/report-pdf";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function escapeCsv(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
@@ -40,6 +41,12 @@ function generateXlsx(rows: Record<string, unknown>[], sheetName: string = "Lapo
   });
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[char]!);
+}
+
 function generateHtmlReport(
   rs: { nama: string; kode: string },
   rows: Record<string, unknown>[],
@@ -49,9 +56,10 @@ function generateHtmlReport(
   const tglDari = new Date(periode.dari).toLocaleDateString("id-ID");
   const tglSampai = new Date(periode.sampai).toLocaleDateString("id-ID");
 
-  const kopHtml = kopSuratBase64
+  const kopData = kopSuratBase64?.replace(/^data:image\/(?:png|jpeg);base64,/i, "");
+  const kopHtml = kopData && /^[A-Za-z0-9+/=\s]+$/.test(kopData)
     ? `<div style="width:100%;text-align:center;margin-bottom:14px;">
-        <img src="data:image/png;base64,${kopSuratBase64}" style="width:100%;max-height:150px;object-fit:contain;display:block;margin:0 auto;" alt="Kop Surat"/>
+        <img src="data:image/png;base64,${kopData}" style="width:100%;max-height:150px;object-fit:contain;display:block;margin:0 auto;" alt="Kop Surat"/>
       </div>
       <hr style="border:none;border-top:2px solid #222;margin:10px 0 18px 0;">`
     : "";
@@ -60,14 +68,14 @@ function generateHtmlReport(
     .map(
       (r) => `
     <tr>
-      <td>${String(r.tanggalUlasan ?? "")}</td>
-      <td>${String(r.namaPengulas ?? "")}</td>
-      <td style="text-align:center">${String(r.rating ?? "")}</td>
-      <td>${String(r.teksUlasan ?? "").slice(0, 200)}</td>
-      <td>${String(r.unitLayanan ?? "")}</td>
-      <td>${String(r.kategoriMasalah ?? "")}</td>
-      <td>${String(r.sentimen ?? "")}</td>
-      <td>${String(r.statusTindakLanjut ?? "")}</td>
+      <td>${escapeHtml(r.tanggalUlasan)}</td>
+      <td>${escapeHtml(r.namaPengulas)}</td>
+      <td style="text-align:center">${escapeHtml(r.rating)}</td>
+      <td>${escapeHtml(String(r.teksUlasan ?? "").slice(0, 200))}</td>
+      <td>${escapeHtml(r.unitLayanan)}</td>
+      <td>${escapeHtml(r.kategoriMasalah)}</td>
+      <td>${escapeHtml(r.sentimen)}</td>
+      <td>${escapeHtml(r.statusTindakLanjut)}</td>
     </tr>
   `
     )
@@ -77,7 +85,7 @@ function generateHtmlReport(
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Laporan Mutu - ${rs.nama}</title>
+  <title>Laporan Mutu - ${escapeHtml(rs.nama)}</title>
   <style>
     @page { size: A4 portrait; margin: 12mm 12mm 15mm 12mm; }
     body { font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; font-size: 11px; color: #111; }
@@ -87,6 +95,10 @@ function generateHtmlReport(
     th, td { border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }
     th { background: #f0f0f0; font-weight: 600; font-size: 10.5px; }
     tr:nth-child(even) { background: #fafafa; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    td { overflow-wrap: anywhere; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     @media print {
       body { margin: 0; }
       @page { size: portrait; }
@@ -96,7 +108,7 @@ function generateHtmlReport(
 <body>
   ${kopHtml}
   <h1>Laporan Mutu Ulasan Layanan</h1>
-  <div class="meta">${rs.nama} | Periode: ${tglDari} — ${tglSampai} | Dicetak: ${new Date().toLocaleString("id-ID")}</div>
+  <div class="meta">${escapeHtml(rs.nama)} | Periode: ${tglDari} — ${tglSampai} | Dicetak: ${new Date().toLocaleString("id-ID")}</div>
   <table>
     <thead>
       <tr>
@@ -110,65 +122,6 @@ function generateHtmlReport(
 </html>`;
 }
 
-function generatePdfReport(
-  rs: { nama: string; kode: string },
-  rows: Record<string, unknown>[],
-  periode: { dari: string; sampai: string },
-  kopSuratBase64: string | null
-): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 42, info: { Title: `Laporan Mutu - ${rs.nama}` } });
-    const chunks: Buffer[] = [];
-    const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-
-    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    const gambarKop = kopSuratBase64?.replace(/^data:image\/[^;]+;base64,/, "");
-    const gambarHeader = () => {
-      if (gambarKop) {
-        try {
-          doc.image(Buffer.from(gambarKop, "base64"), doc.page.margins.left, doc.y, {
-            fit: [contentWidth, 72],
-            align: "center",
-          });
-          doc.y += 82;
-          doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#9ca3af").stroke();
-          doc.y += 14;
-        } catch {
-          // Kop surat rusak tidak boleh menggagalkan ekspor laporan.
-        }
-      }
-      doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827").text("Laporan Mutu Ulasan Layanan", { align: "center" });
-      doc.moveDown(0.35);
-      doc.font("Helvetica").fontSize(9).fillColor("#4b5563").text(`${rs.nama} (${rs.kode})`, { align: "center" });
-      doc.text(`Periode: ${new Date(periode.dari).toLocaleDateString("id-ID")} - ${new Date(periode.sampai).toLocaleDateString("id-ID")}`, { align: "center" });
-      doc.moveDown(1.2);
-    };
-
-    gambarHeader();
-    rows.forEach((row, index) => {
-      const ulasan = String(row.teksUlasan ?? "").trim() || "(Ulasan tanpa teks)";
-      doc.font("Helvetica").fontSize(9);
-      const tinggiUlasan = doc.heightOfString(ulasan, { width: contentWidth - 20, lineGap: 2 });
-      const tinggiMinimum = 58 + tinggiUlasan;
-      if (doc.y + tinggiMinimum > doc.page.height - doc.page.margins.bottom) {
-        doc.addPage();
-        gambarHeader();
-      }
-
-      doc.roundedRect(doc.page.margins.left, doc.y, contentWidth, tinggiMinimum, 5).fillAndStroke("#f9fafb", "#d1d5db");
-      const awalY = doc.y + 10;
-      doc.font("Helvetica-Bold").fontSize(9).fillColor("#111827").text(`${index + 1}. ${String(row.namaPengulas || "Pengulas tidak dikenal")}`, doc.page.margins.left + 10, awalY, { width: contentWidth - 20 });
-      doc.font("Helvetica").fontSize(8).fillColor("#6b7280").text(`Tanggal: ${String(row.tanggalUlasan || "-")}  |  Rating: ${String(row.rating || "-")}  |  Unit: ${String(row.unitLayanan || "-")}`, doc.page.margins.left + 10, awalY + 14, { width: contentWidth - 20 });
-      doc.font("Helvetica").fontSize(9).fillColor("#1f2937").text(ulasan, doc.page.margins.left + 10, awalY + 30, { width: contentWidth - 20, lineGap: 2 });
-      doc.y += tinggiMinimum + 10;
-    });
-
-    doc.end();
-  });
-}
 
 async function generateDocx(
   rs: { nama: string; kode: string },
@@ -364,14 +317,14 @@ export async function POST(req: Request) {
 
   const effectiveKopSurat = kopSuratBase64 || rs.kopSurat || null;
 
-  // ── PDF (HTML siap cetak) ─────────────────────────────────────
+  // Cetak template laporan yang sama menjadi PDF.
   if (format === "pdf") {
-    const buffer = await generatePdfReport(
+    const buffer = await renderReportPdf(generateHtmlReport(
       rs,
       records,
       { dari, sampai },
       effectiveKopSurat
-    );
+    ));
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
