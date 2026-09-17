@@ -439,7 +439,10 @@ export async function analisisBatchUlasanDenganAI(
   }
 
   let lastError: unknown = null;
-  const maksimumPercobaan = 5;
+  // Batch analisis harus cepat beralih ke fallback rating saat Gemini
+  // rate-limit/high demand; menunggu lima backoff dapat membuat route
+  // serverless timeout sebelum ulasan tersisa sempat disimpan.
+  const maksimumPercobaan = 2;
   for (let jumlahPercobaan = 0; jumlahPercobaan < maksimumPercobaan; jumlahPercobaan++) {
     try {
       return await callOnceGeminiBatch(items, 60_000, config.model, lokasi);

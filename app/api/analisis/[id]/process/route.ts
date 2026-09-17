@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
 import { analisis, rumahSakit, ulasan, AnalisisRow } from "@/lib/db/schema";
 import { finalisasiAnalisisDihentikan, mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
@@ -37,7 +37,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const modelAI = konfigurasiRS?.[0]?.ai_model ?? null;
   const customConfig = parseCustomAIConfig(konfigurasiRS?.[0]?.ai_api_key);
   const pakaiAI = aiConfigured(modelAI, customConfig);
-  const hanyaSisa = item.status === "berhenti";
+  const checkpointTersimpan = item.ulasanDiproses ?? 0;
+  // Jika instance sebelumnya mati setelah status diubah menjadi berjalan,
+  // lanjutkan hanya ulasan yang belum berlabel. Jangan memulai ulang dari nol.
+  const hanyaSisa = item.status === "berhenti" ||
+    (item.status === "berjalan" && checkpointTersimpan > 0);
 
   // Jangan membangun ulang ringkasan atau memulai worker baru sebelum worker
   // sebelumnya benar-benar keluar. Ini menutup celah klik ulang tepat setelah stop.
@@ -100,7 +104,6 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     });
   }
 
-  const ulangi = item.status === "selesai" || item.status === "berhenti";
   // Catat status sebelum response dikirim. Tanpa ini, polling dapat membaca
   // status lama ketika worker after() belum sempat mulai di deployment serverless.
   // Saat menganalisis sisa (berhenti → berjalan), pertahankan hasil sebelumnya.
@@ -120,24 +123,29 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   if (!proses) {
     return NextResponse.json({ status: "berjalan", pesan: "Analisis sedang diproses." });
   }
-  if (process.env.VERCEL === "1") {
-    after(() => proses);
-  } else {
-    void proses;
-  }
+  await proses;
+  const { data: hasilAkhirRaw } = await supabase
+    .from(analisis)
+    .select("status, ulasan_diproses, total_ulasan, catatan")
+    .eq("id", analisisId)
+    .limit(1);
+  const hasilAkhir = hasilAkhirRaw?.[0];
+  const statusAkhir = hasilAkhir?.status ?? "berjalan";
+  const totalAkhir = hasilAkhir?.total_ulasan ?? totalUlasan;
+  const diprosesAkhir = hasilAkhir?.ulasan_diproses ?? checkpoint;
+  const sisaAkhir = Math.max(0, totalAkhir - diprosesAkhir);
+
   return NextResponse.json({
-    status: "berjalan",
+    status: statusAkhir,
     pakaiAI,
     model: modelAI,
-    totalUlasan,
-    ulasanDiproses: checkpoint,
-    sisaUlasan,
-    pesan: !pakaiAI
-      ? "API key untuk model terpilih belum dikonfigurasi di environment lokal; sentimen ditentukan dari rating bintang."
-      : hanyaSisa
-        ? `Menganalisis ${sisaUlasan} ulasan tersisa. ${checkpoint} hasil sebelumnya tetap tersimpan.`
-        : ulangi
-          ? "Analisis diproses ulang. Setiap ulasan sedang dikirim ke AI Gateway."
-          : "Analisis dimulai. Setiap ulasan sedang dikirim ke AI Gateway.",
+    totalUlasan: totalAkhir,
+    ulasanDiproses: diprosesAkhir,
+    sisaUlasan: sisaAkhir,
+    pesan: statusAkhir === "selesai"
+      ? "Seluruh ulasan sudah dianalisis."
+      : sisaAkhir > 0
+        ? `Analisis berhenti dengan ${sisaAkhir} ulasan yang masih tersisa.`
+        : "Analisis selesai diproses.",
   });
 }
