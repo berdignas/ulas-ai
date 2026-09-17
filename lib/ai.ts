@@ -45,6 +45,31 @@ export interface InputAnalisisUlasan {
   id: number;
   teksUlasan: string;
   rating: number | null;
+  namaPengulas?: string | null;
+}
+
+/**
+ * Menyapa pengulas hanya jika nama terlihat seperti nama manusia yang aman.
+ * Nama akun anonim, username teknis, atau nama yang tidak jelas tidak dipakai.
+ */
+export function namaPengulasLayakDisapa(nama: string | null | undefined): string | null {
+  const nilai = String(nama ?? "").replace(/\s+/g, " ").trim();
+  if (nilai.length < 2 || nilai.length > 60 || !/^\p{L}[\p{L}\s.'-]*$/u.test(nilai)) return null;
+  const normal = nilai.toLowerCase();
+  if (["anonim", "anonymous", "unknown", "pengguna google", "a google user", "google user", "tanpa nama"].includes(normal)) return null;
+  if (!/[\p{L}]{2}/u.test(nilai)) return null;
+  return nilai;
+}
+
+export function personalisasiDrafBalasan(
+  draf: string | null | undefined,
+  namaPengulas: string | null | undefined,
+  faktorUrgensiMedis = false
+): string {
+  const teks = String(draf ?? "").trim();
+  const nama = namaPengulasLayakDisapa(namaPengulas);
+  if (!teks || !nama || faktorUrgensiMedis || teks.toLocaleLowerCase().includes(nama.toLocaleLowerCase())) return teks;
+  return `${nama}, ${teks}`.slice(0, 500);
 }
 
 export interface AIAnalisisCallbacks {
@@ -114,6 +139,12 @@ ATURAN EKSTRAKSI:
 
 7. lokasiLayanan: Pilih maksimal TIGA nama poli/ruangan/unit dari DAFTAR LOKASI RS yang diberikan.
    Gunakan array kosong jika ulasan tidak menyebut lokasi secara jelas. Jangan mengarang nama lokasi.
+
+8. Personalisasi saranDrafBalasan:
+   - Jika input memiliki namaPengulas yang jelas seperti nama orang, gunakan nama tersebut maksimal satu kali secara natural.
+   - Jangan menebak gender atau membuat sapaan Bapak/Ibu dari nama.
+   - Jangan gunakan nama untuk nama anonim, username teknis, atau jika faktorUrgensiMedis bernilai true.
+   - Jika nama tidak layak digunakan, pakai sapaan netral tanpa menyebut nama.
 
 Balas HANYA dengan JSON valid:
 {
@@ -431,7 +462,7 @@ export async function analisisBatchUlasanDenganAI(
 
     console.warn(`[ai] ${config.providerLabel} batch gagal, mencoba per ulasan secara sekuensial:`, lastError);
     for (const item of items) {
-      const res = await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi, customConfig);
+              const res = await analisisUlasanDenganAI(item.teksUlasan, item.rating, preferredModel, lokasi, customConfig);
       hasil.set(item.id, res);
       await new Promise((r) => setTimeout(r, 800));
     }
@@ -988,6 +1019,7 @@ async function callOnceGeminiBatch(
                 id: item.id,
                 rating: item.rating,
                 ulasan: item.teksUlasan,
+                namaPengulas: item.namaPengulas ?? null,
               })),
             }),
           }],
@@ -1079,6 +1111,7 @@ async function callOnceOpenAIBatch(
                 id: item.id,
                 rating: item.rating,
                 ulasan: item.teksUlasan,
+                namaPengulas: item.namaPengulas ?? null,
               })),
             }),
           },

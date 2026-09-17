@@ -284,7 +284,7 @@ export default function ExportPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const ext = fmt === "pdf" ? "html" : fmt === "xlsx" ? "xlsx" : "docx";
+      const ext = fmt === "pdf" ? "pdf" : fmt === "xlsx" ? "xlsx" : "docx";
       a.download = `laporan-mutu-${format(dari, "yyyyMMdd")}-${format(sampai, "yyyyMMdd")}.${ext}`;
       document.body.appendChild(a);
       a.click();

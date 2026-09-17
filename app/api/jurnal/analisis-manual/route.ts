@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
 import { ulasan, rumahSakit, UlasanRow } from "@/lib/db/schema";
-import { aiConfigured, analisisBatchUlasanDenganAI, getAIErrorInfo, sentimenFallbackDariRating } from "@/lib/ai";
+import { aiConfigured, analisisBatchUlasanDenganAI, getAIErrorInfo, personalisasiDrafBalasan, sentimenFallbackDariRating } from "@/lib/ai";
 import { parseCustomAIConfig } from "@/lib/ai-config";
 
 export const runtime = "nodejs";
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
     if (aiTersedia) {
       try {
         const hasilBatch = await analisisBatchUlasanDenganAI(
-          [{ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null }],
+          [{ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null, namaPengulas: item.namaPengulas ?? null }],
           modelAI,
           [], // Tidak perlu daftar lokasi untuk analisis manual individual
           {},
@@ -68,7 +68,11 @@ export async function POST(req: Request) {
           unitLayanan = hasil.unitLayanan;
           kategoriMasalah = hasil.kategoriMasalah;
           faktorUrgensiMedis = hasil.faktorUrgensiMedis;
-          saranDrafBalasan = hasil.saranDrafBalasan;
+          saranDrafBalasan = personalisasiDrafBalasan(
+            hasil.saranDrafBalasan,
+            item.namaPengulas,
+            hasil.faktorUrgensiMedis
+          );
           pakaiAI = true;
         } else {
           // AI gagal, fallback ke rating

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase, toCamel, toSnake } from "@/lib/db";
 import { rumahSakit, ulasan, UlasanRow } from "@/lib/db/schema";
-import { analisisBatchUlasanDenganAI } from "@/lib/ai";
+import { analisisBatchUlasanDenganAI, personalisasiDrafBalasan } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   }
 
   const { data: ulasanDataRaw } = await supabase.from(ulasan)
-    .select("id, teks_ulasan, rating, rumah_sakit_id")
+    .select("id, teks_ulasan, rating, rumah_sakit_id, nama_pengulas")
     .in("id", targetIds);
 
   const ulasanData = toCamel<UlasanRow[]>(ulasanDataRaw ?? []);
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   const modelAI = konfigurasiRS?.[0]?.ai_model ?? null;
 
   const hasil = await analisisBatchUlasanDenganAI(
-    ulasanData.map((u) => ({ id: u.id, teksUlasan: u.teksUlasan, rating: u.rating ?? null })),
+    ulasanData.map((u) => ({ id: u.id, teksUlasan: u.teksUlasan, rating: u.rating ?? null, namaPengulas: u.namaPengulas ?? null })),
     modelAI
   );
 
@@ -59,7 +59,11 @@ export async function POST(req: Request) {
         kategoriMasalah: res.kategoriMasalah,
         sentimen: res.sentimen,
         faktorUrgensiMedis: res.faktorUrgensiMedis,
-        saranDrafBalasan: res.saranDrafBalasan,
+        saranDrafBalasan: personalisasiDrafBalasan(
+          res.saranDrafBalasan,
+          ulasanData.find((item) => item.id === id)?.namaPengulas,
+          res.faktorUrgensiMedis
+        ),
         diperbaruiPada: new Date().toISOString(),
       }))
       .eq("id", id);

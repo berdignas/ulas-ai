@@ -17,6 +17,7 @@ import {
   BorderStyle,
   PageOrientation,
 } from "docx";
+import PDFDocument from "pdfkit";
 
 export const runtime = "nodejs";
 
@@ -107,6 +108,66 @@ function generateHtmlReport(
   </table>
 </body>
 </html>`;
+}
+
+function generatePdfReport(
+  rs: { nama: string; kode: string },
+  rows: Record<string, unknown>[],
+  periode: { dari: string; sampai: string },
+  kopSuratBase64: string | null
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 42, info: { Title: `Laporan Mutu - ${rs.nama}` } });
+    const chunks: Buffer[] = [];
+    const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const gambarKop = kopSuratBase64?.replace(/^data:image\/[^;]+;base64,/, "");
+    const gambarHeader = () => {
+      if (gambarKop) {
+        try {
+          doc.image(Buffer.from(gambarKop, "base64"), doc.page.margins.left, doc.y, {
+            fit: [contentWidth, 72],
+            align: "center",
+          });
+          doc.y += 82;
+          doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#9ca3af").stroke();
+          doc.y += 14;
+        } catch {
+          // Kop surat rusak tidak boleh menggagalkan ekspor laporan.
+        }
+      }
+      doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827").text("Laporan Mutu Ulasan Layanan", { align: "center" });
+      doc.moveDown(0.35);
+      doc.font("Helvetica").fontSize(9).fillColor("#4b5563").text(`${rs.nama} (${rs.kode})`, { align: "center" });
+      doc.text(`Periode: ${new Date(periode.dari).toLocaleDateString("id-ID")} - ${new Date(periode.sampai).toLocaleDateString("id-ID")}`, { align: "center" });
+      doc.moveDown(1.2);
+    };
+
+    gambarHeader();
+    rows.forEach((row, index) => {
+      const ulasan = String(row.teksUlasan ?? "").trim() || "(Ulasan tanpa teks)";
+      doc.font("Helvetica").fontSize(9);
+      const tinggiUlasan = doc.heightOfString(ulasan, { width: contentWidth - 20, lineGap: 2 });
+      const tinggiMinimum = 58 + tinggiUlasan;
+      if (doc.y + tinggiMinimum > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        gambarHeader();
+      }
+
+      doc.roundedRect(doc.page.margins.left, doc.y, contentWidth, tinggiMinimum, 5).fillAndStroke("#f9fafb", "#d1d5db");
+      const awalY = doc.y + 10;
+      doc.font("Helvetica-Bold").fontSize(9).fillColor("#111827").text(`${index + 1}. ${String(row.namaPengulas || "Pengulas tidak dikenal")}`, doc.page.margins.left + 10, awalY, { width: contentWidth - 20 });
+      doc.font("Helvetica").fontSize(8).fillColor("#6b7280").text(`Tanggal: ${String(row.tanggalUlasan || "-")}  |  Rating: ${String(row.rating || "-")}  |  Unit: ${String(row.unitLayanan || "-")}`, doc.page.margins.left + 10, awalY + 14, { width: contentWidth - 20 });
+      doc.font("Helvetica").fontSize(9).fillColor("#1f2937").text(ulasan, doc.page.margins.left + 10, awalY + 30, { width: contentWidth - 20, lineGap: 2 });
+      doc.y += tinggiMinimum + 10;
+    });
+
+    doc.end();
+  });
 }
 
 async function generateDocx(
@@ -305,16 +366,16 @@ export async function POST(req: Request) {
 
   // ── PDF (HTML siap cetak) ─────────────────────────────────────
   if (format === "pdf") {
-    const html = generateHtmlReport(
+    const buffer = await generatePdfReport(
       rs,
       records,
       { dari, sampai },
       effectiveKopSurat
     );
-    return new NextResponse(html, {
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Content-Disposition": `inline; filename="${namaFile}.html"`,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${namaFile}.pdf"`,
       },
     });
   }

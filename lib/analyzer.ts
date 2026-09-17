@@ -18,6 +18,7 @@ import {
   buatKondisiUmum,
   kondisiUmumFallback,
   getAIErrorInfo,
+  personalisasiDrafBalasan,
   sentimenFallbackDariRating,
 } from "./ai";
 import {
@@ -326,7 +327,11 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
           unitLayanan = hasil.unitLayanan;
           kategoriMasalah = hasil.kategoriMasalah;
           faktorUrgensiMedis = hasil.faktorUrgensiMedis;
-          saranDrafBalasan = hasil.saranDrafBalasan;
+          saranDrafBalasan = personalisasiDrafBalasan(
+            hasil.saranDrafBalasan,
+            item.namaPengulas,
+            hasil.faktorUrgensiMedis
+          );
           pakaiAI = true;
       } else {
         sentimen = sentimenFallbackDariRating(item.rating ?? null);
@@ -368,7 +373,7 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       if (aiTersedia) {
         try {
           hasilBatch = await analisisBatchUlasanDenganAI(
-            batch.map((item) => ({ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null })),
+            batch.map((item) => ({ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null, namaPengulas: item.namaPengulas ?? null })),
             modelAI,
             daftarLokasi,
             {
