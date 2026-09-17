@@ -143,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         Lewati navigasi
       </a>
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-border bg-sidebar lg:flex">
-        <div className="flex items-center justify-center px-5 pt-6 pb-5">
+        <div className="flex h-16 items-center justify-center px-5">
           <Image src="/logo ulas ai.svg" alt="Ulas AI" width={125} height={50} priority />
         </div>
         <Separator />
