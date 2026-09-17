@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Key, PencilSimple, Plus, ShieldCheck, SpinnerGap, Trash, UsersThree, X } from "@phosphor-icons/react";
 import { PageHeader } from "@/components/page-header";
 import { LoadingSection } from "@/components/states";
@@ -18,8 +19,10 @@ type User = { id: number; username: string; role: Role; dibuat_pada: string; ter
 const roleLabel: Record<Role, string> = { admin: "Admin", pkrs: "PKRS", pengaduan: "Pengaduan" };
 
 export default function ManajemenAkunPage() {
+  const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [accessChecked, setAccessChecked] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<User | null>(null);
@@ -40,9 +43,26 @@ export default function ManajemenAkunPage() {
   }
 
   useEffect(() => {
+    let aktif = true;
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { loggedIn?: boolean; isAdmin?: boolean }) => {
+        if (!aktif) return;
+        if (!data.loggedIn || !data.isAdmin) {
+          router.replace("/");
+          return;
+        }
+        setAccessChecked(true);
+      })
+      .catch(() => router.replace("/"));
+    return () => { aktif = false; };
+  }, [router]);
+
+  useEffect(() => {
+    if (!accessChecked) return;
     const timer = window.setTimeout(() => void loadUsers(), 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [accessChecked]);
 
   function startCreate() {
     setEditing(null);
@@ -86,7 +106,7 @@ export default function ManajemenAkunPage() {
     else await loadUsers();
   }
 
-  if (loading) return <LoadingSection rows={4} />;
+  if (!accessChecked || loading) return <LoadingSection rows={4} />;
 
   return (
     <div className="space-y-8">

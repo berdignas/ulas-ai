@@ -34,12 +34,13 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
       .maybeSingle();
     if (sessionError || !session) return null;
 
-    let { data: admin, error: adminError } = await supabase
+    const { data: adminData, error: adminError } = await supabase
       .from("admin")
       .select("id, username, role")
       .eq("id", session.admin_id)
       .maybeSingle();
     // Selama migrasi belum dijalankan, akun lama tetap bisa masuk sebagai admin.
+    let admin = adminData;
     if (adminError) {
       const fallback = await supabase
         .from("admin")
