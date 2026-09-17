@@ -163,6 +163,30 @@ async function ambilTotalUlasanAktual(analisisId: number, fallback: number): Pro
   return error || count === null ? fallback : count;
 }
 
+async function ambilSemuaUlasanAnalisis(analisisId: number): Promise<UlasanRow[]> {
+  // Supabase/PostgREST membatasi response default ke 1.000 baris. Analisis
+  // harus mengambil semua halaman agar ulasan lama setelah batas itu tidak
+  // diam-diam terlewat saat proses sisa dijalankan.
+  const ukuranHalaman = 1000;
+  const semua: UlasanRow[] = [];
+
+  for (let dari = 0; ; dari += ukuranHalaman) {
+    const { data, error } = await supabase
+      .from(ulasan)
+      .select("*")
+      .eq("analisis_id", analisisId)
+      .order("id", { ascending: true })
+      .range(dari, dari + ukuranHalaman - 1);
+    if (error) throw new Error(`Gagal mengambil ulasan analisis: ${error.message}`);
+
+    const halaman = toCamel<UlasanRow[]>(data ?? []);
+    semua.push(...halaman);
+    if (halaman.length < ukuranHalaman) break;
+  }
+
+  return semua;
+}
+
 export async function finalisasiAnalisisDihentikan(
   analisisId: number,
   totalUlasan: number,
@@ -211,8 +235,7 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       .update(toSnake({ status: "berjalan" }))
       .eq("id", analisisId);
 
-    const { data: daftarUlasanRaw } = await supabase.from(ulasan).select("*").eq("analisis_id", analisisId);
-    const daftarUlasan = toCamel<UlasanRow[]>(daftarUlasanRaw ?? []);
+    const daftarUlasan = await ambilSemuaUlasanAnalisis(analisisId);
     const rumahSakitId = daftarUlasan[0]?.rumahSakitId;
     const { data: konfigurasiRSRaw } = rumahSakitId
       ? await supabase.from(rumahSakit).select("ai_model, ai_api_key").eq("id", rumahSakitId).limit(1)

@@ -247,6 +247,11 @@ export default function DashboardPage() {
     if (dipilih === null || prosesUlangJalan) return;
     setProsesUlangJalan(true);
     setPesanProsesUlang(null);
+    // Tampilkan status berjalan segera agar progress polling aktif selama
+    // endpoint menunggu worker menyelesaikan batch analisis.
+    setDaftar((prev) => prev.map((item) => (
+      item.id === dipilih ? { ...item, status: "berjalan" } : item
+    )));
     try {
       const res = await fetch(`/api/analisis/${dipilih}/process`, { method: "POST" });
       const data = (await res.json()) as {
