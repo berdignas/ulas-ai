@@ -139,6 +139,7 @@ CREATE TABLE admin (
     id SERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'pkrs', 'pengaduan')),
     dibuat_pada TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     terakhir_login TIMESTAMP WITH TIME ZONE
 );
@@ -154,9 +155,15 @@ CREATE TABLE admin_session (
 CREATE INDEX admin_session_admin_idx ON admin_session(admin_id);
 CREATE INDEX admin_session_kedaluwarsa_idx ON admin_session(kedaluwarsa_pada);
 
--- Seed default admin (admin / admin)
+-- Seed akun bawaan (password disimpan sebagai SHA-256)
 INSERT INTO admin (username, password_hash)
-VALUES ('admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918')
+VALUES ('admin', '91ba8114e3f14912d9168e954c6664320087cd159d2f4bb67ba36fef2ec381f7')
+ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'admin';
+
+INSERT INTO admin (username, password_hash, role)
+VALUES
+  ('pkrs', '06ee3dc95f02f454277fa17874b21d10665a6b8c0075a630e5fa60e25a59a1ec', 'pkrs'),
+  ('pengaduan', 'e507c62fa6af4d504b747dbe42521f47b03a3d31f84663a45937fd020ed3dacc', 'pengaduan')
 ON CONFLICT (username) DO NOTHING;
 
 -- ============================================

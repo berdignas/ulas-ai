@@ -15,6 +15,7 @@ import {
   SignOut,
   Tag,
   UploadSimple,
+  UsersThree,
 } from "@phosphor-icons/react";
 import type { IconProps } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/aspek", label: "Analisis Aspek", icon: Tag, step: 3 },
   { href: "/export", label: "Ekspor Laporan", icon: Download, step: 4 },
   { href: "/pengaturan", label: "Pengaturan RS", icon: Gear, step: 5 },
+  { href: "/manajemen-akun", label: "Manajemen Akun", icon: UsersThree, step: null },
 ];
 
 function SidebarLink({ href, label, icon: Icon, step }: NavItem) {
@@ -91,6 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [aiModelName, setAiModelName] = useState("Memuat model…");
   const [aiModelConfigured, setAiModelConfigured] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ username: string; role: "admin" | "pkrs" | "pengaduan" } | null>(null);
 
   useEffect(() => {
     async function loadConfig() {
@@ -115,6 +118,21 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("ulas_ai_config_updated", handleConfigUpdated);
   }, []);
 
+  useEffect(() => {
+    let aktif = true;
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { loggedIn?: boolean; username?: string; role?: "admin" | "pkrs" | "pengaduan" }) => {
+        if (!aktif || !data.loggedIn || !data.username || !data.role) return;
+        setCurrentUser({ username: data.username, role: data.role });
+        if (data.role !== "admin" && (pathname.startsWith("/pengaturan") || pathname.startsWith("/manajemen-akun"))) {
+          router.replace("/");
+        }
+      })
+      .catch(() => undefined);
+    return () => { aktif = false; };
+  }, [pathname, router]);
+
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -129,6 +147,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (pathname === "/login") {
     return <>{children}</>;
   }
+
+  const visibleNav = NAV_ITEMS.filter((item) =>
+    currentUser?.role === "admin" || (item.href !== "/pengaturan" && item.href !== "/manajemen-akun")
+  );
 
   const current = NAV_ITEMS.find((item) =>
     item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
@@ -148,7 +170,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <Separator />
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
-          {NAV_ITEMS.map((item) => (
+          {visibleNav.map((item) => (
             <SidebarLink key={item.href} {...item} />
           ))}
         </nav>
@@ -196,7 +218,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </DialogHeader>
 
                   <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3 py-4" aria-label="Navigasi utama">
-                    {NAV_ITEMS.map((item) => {
+                    {visibleNav.map((item) => {
                       const aktif = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
                       const Icon = item.icon;
                       return (
@@ -292,29 +314,37 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <DropdownMenuTrigger asChild>
                   <button className="flex min-h-11 items-center gap-2.5 rounded-full border border-border/80 bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition-all duration-200 hover:bg-accent hover:border-border shadow-2xs focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
                     <div className="flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-[11px] tracking-wider">
-                      BD
+                      {(currentUser?.username ?? "user").slice(0, 2).toUpperCase()}
                     </div>
-                    <span className="hidden sm:inline font-medium">Bagoes Dev</span>
+                    <span className="hidden sm:inline font-medium">{currentUser?.username ?? "Pengguna"}</span>
                     <CaretDown className="size-3.5 text-muted-foreground opacity-70" weight="bold" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56 p-1.5">
                   <div className="px-2 py-2">
-                    <p className="text-xs font-semibold text-foreground">Bagoes Dev</p>
-                    <p className="text-[11px] text-muted-foreground truncate">bagoesdev@ulas.ai</p>
+                    <p className="text-xs font-semibold text-foreground">{currentUser?.username ?? "Pengguna"}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">Akun Ulas AI</p>
                     <div className="mt-1.5">
                       <Badge variant="secondary" className="text-[10px] font-normal px-2 py-0.5">
-                        Admin Pengelola RS
+                        {currentUser?.role === "admin" ? "Admin Pengelola RS" : currentUser?.role === "pkrs" ? "PKRS" : "Pengaduan"}
                       </Badge>
                     </div>
                   </div>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild className="cursor-pointer">
-                    <Link href="/pengaturan" className="flex items-center gap-2">
-                      <Gear className="size-4" weight="regular" />
-                      <span>Pengaturan RS</span>
-                    </Link>
-                  </DropdownMenuItem>
+                  {currentUser?.role === "admin" && <>
+                    <DropdownMenuItem asChild className="cursor-pointer">
+                      <Link href="/pengaturan" className="flex items-center gap-2">
+                        <Gear className="size-4" weight="regular" />
+                        <span>Pengaturan RS</span>
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild className="cursor-pointer">
+                      <Link href="/manajemen-akun" className="flex items-center gap-2">
+                        <UsersThree className="size-4" weight="regular" />
+                        <span>Manajemen Akun</span>
+                      </Link>
+                    </DropdownMenuItem>
+                  </>}
                   <DropdownMenuItem asChild className="cursor-pointer">
                     <Link href="/jurnal" className="flex items-center gap-2">
                       <ClipboardText className="size-4" weight="regular" />

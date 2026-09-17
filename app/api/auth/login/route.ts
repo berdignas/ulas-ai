@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import crypto from "crypto";
 import { supabase } from "@/lib/supabase";
+import { hashPassword, SESSION_COOKIE, type UserRole } from "@/lib/auth";
 
 // Gunakan Node.js runtime agar crypto tersedia
 export const runtime = "nodejs";
@@ -21,42 +20,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Cek apakah kredensial default admin/admin
-    const isDefaultAdmin = username === "admin" && password === "admin";
-    let adminId = 1;
-    let isValid = isDefaultAdmin;
+    let { data: admin, error: adminError } = await supabase
+      .from("admin")
+      .select("id, username, password_hash, role")
+      .eq("username", String(username).trim())
+      .maybeSingle();
 
-    if (!isDefaultAdmin) {
-      // Hash password dengan SHA-256
-      const passwordHash = crypto
-        .createHash("sha256")
-        .update(password)
-        .digest("hex");
-
-      // Cari admin dengan username & hash yang cocok di DB
-      try {
-        const { data: admin } = await supabase
-          .from("admin")
-          .select("id, username")
-          .eq("username", username)
-          .eq("password_hash", passwordHash)
-          .maybeSingle();
-
-        if (admin) {
-          isValid = true;
-          adminId = admin.id;
-        }
-      } catch {
-        // Abaikan jika tabel belum ada
-      }
+    if (adminError) {
+      const fallback = await supabase
+        .from("admin")
+        .select("id, username, password_hash")
+        .eq("username", String(username).trim())
+        .maybeSingle();
+      admin = fallback.data ? { ...fallback.data, role: "admin" } : null;
+      adminError = fallback.error;
+    }
+    if (adminError) {
+      console.error("[auth/login] database error:", adminError.message);
+      return NextResponse.json({ sukses: false, pesan: "Autentikasi belum siap. Jalankan migrasi role akun terlebih dahulu." }, { status: 503 });
     }
 
-    if (!isValid) {
+    if (!admin || admin.password_hash !== hashPassword(password)) {
       return Response.json(
         { sukses: false, pesan: "Username atau password salah." },
         { status: 401 }
       );
     }
+
+    const adminId = admin.id;
+    const role = (admin.role || "admin") as UserRole;
 
     // Buat session token (UUID v4)
     const sessionToken = crypto.randomUUID();
@@ -65,27 +57,30 @@ export async function POST(request: NextRequest) {
     const kedaluwarsa = new Date();
     kedaluwarsa.setDate(kedaluwarsa.getDate() + 7);
 
-    // Simpan session ke DB jika tabel tersedia (non-blocking jika belum dimigrasi)
-    try {
-      await supabase
-        .from("admin_session")
-        .insert({
-          id: sessionToken,
-          admin_id: adminId,
-          kedaluwarsa_pada: kedaluwarsa.toISOString(),
-        });
+    const { error: sessionError } = await supabase
+      .from("admin_session")
+      .insert({
+        id: sessionToken,
+        admin_id: adminId,
+        kedaluwarsa_pada: kedaluwarsa.toISOString(),
+      });
 
-      await supabase
-        .from("admin")
-        .update({ terakhir_login: new Date().toISOString() })
-        .eq("id", adminId);
-    } catch {
-      // Abaikan jika tabel admin_session belum dibuat di Supabase
+    if (sessionError) {
+      console.error("[auth/login] session error:", sessionError.message);
+      return NextResponse.json(
+        { sukses: false, pesan: "Sesi login gagal dibuat. Periksa tabel autentikasi." },
+        { status: 503 }
+      );
     }
 
+    await supabase
+      .from("admin")
+      .update({ terakhir_login: new Date().toISOString() })
+      .eq("id", adminId);
+
     // Buat response dan set cookie ulas_ai_session
-    const response = NextResponse.json({ sukses: true });
-    response.cookies.set("ulas_ai_session", sessionToken, {
+    const response = NextResponse.json({ sukses: true, user: { username: admin.username, role } });
+    response.cookies.set(SESSION_COOKIE, sessionToken, {
       httpOnly: true,
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 hari dalam detik

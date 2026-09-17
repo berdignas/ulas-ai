@@ -3,6 +3,7 @@ import { supabase, toCamel, toSnake } from "@/lib/db";
 import { rumahSakit, ulasan, sinkronLog, lokasiLayananRs, RumahSakitRow } from "@/lib/db/schema";
 import { getAIModelOptions, parseCustomAIConfig } from "@/lib/ai-config";
 import { LOKASI_DEFAULT } from "@/lib/service-taxonomy";
+import { getCurrentUser, isAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -31,10 +32,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const currentUser = await getCurrentUser();
+  const privileged = isAdmin(currentUser);
   const rumahSakitList = toCamel<RumahSakitRow[]>(data ?? []).map((rs) => {
     const custom = parseCustomAIConfig(rs.aiApiKey);
     return {
       ...rs,
+      apifyToken: privileged ? rs.apifyToken : null,
       customAI: custom ? {
         providerName: custom.providerName,
         baseUrl: custom.baseUrl,
@@ -50,6 +54,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Hanya admin yang dapat mengubah Pengaturan RS." }, { status: 403 });
   try {
     const body = await req.json();
     const { nama, kode, googleMapsPlaceId, apifyActorId, apifyToken, zonaWaktu, jamSinkron, aiModel, customAI } = body;
@@ -122,6 +128,8 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Hanya admin yang dapat mengubah Pengaturan RS." }, { status: 403 });
   const body = await req.json();
   const { id, nama, kode, googleMapsPlaceId, apifyActorId, apifyToken, zonaWaktu, jamSinkron, aktif, aiModel, customAI, kopSurat } = body;
   if (!id || !nama || !kode) {
@@ -199,6 +207,8 @@ export async function PUT(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Hanya admin yang dapat mengubah Pengaturan RS." }, { status: 403 });
   try {
     const body = await req.json();
     const { id, kopSurat } = body;
@@ -226,6 +236,8 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Hanya admin yang dapat mengubah Pengaturan RS." }, { status: 403 });
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "ID wajib" }, { status: 400 });

@@ -28,7 +28,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LayananEditor } from "./_components/layanan-editor";
 
 type CustomAIConfigData = {
@@ -65,6 +65,8 @@ type AIModelOption = {
 
 function PengaturanContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const [accessChecked, setAccessChecked] = useState(false);
 
   const [rumahSakitList, setRumahSakitList] = useState<RumahSakit[]>([]);
   const [rsId] = useState<string | null>(searchParams?.get("rs") ?? null);
@@ -103,6 +105,22 @@ function PengaturanContent() {
   const [testResult, setTestResult] = useState<{ sukses: boolean; pesan: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [testingAI, setTestingAI] = useState(false);
+
+  useEffect(() => {
+    let aktif = true;
+    void fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { loggedIn?: boolean; role?: string }) => {
+        if (!aktif) return;
+        if (!data.loggedIn || data.role !== "admin") {
+          router.replace("/");
+          return;
+        }
+        setAccessChecked(true);
+      })
+      .catch(() => router.replace("/"));
+    return () => { aktif = false; };
+  }, [router]);
 
   const fetchList = useCallback(async () => {
     try {
@@ -190,9 +208,12 @@ function PengaturanContent() {
   }, [rsId, selectedId]);
 
   useEffect(() => {
+    if (!accessChecked) return;
     const timer = window.setTimeout(() => void fetchList(), 0);
     return () => window.clearTimeout(timer);
-  }, [fetchList]);
+  }, [accessChecked, fetchList]);
+
+  if (!accessChecked) return <LoadingSection rows={4} />;
 
   const handleSelect = (rs: RumahSakit) => {
     setSelectedId(rs.id);

@@ -12,6 +12,7 @@ import {
   JenisLokasiLayanan,
   LOKASI_DEFAULT,
 } from "@/lib/service-taxonomy";
+import { getCurrentUser, isAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -128,6 +129,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Hanya admin yang dapat mengubah Pengaturan RS." }, { status: 403 });
   try {
     const { id } = await ctx.params;
     const rumahSakitId = Number(id);
@@ -202,6 +205,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Hanya admin yang dapat mengubah Pengaturan RS." }, { status: 403 });
   const { id } = await ctx.params;
   const rumahSakitId = Number(id);
   if (!Number.isFinite(rumahSakitId)) {

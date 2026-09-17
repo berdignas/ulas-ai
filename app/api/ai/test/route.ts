@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { resolveAIConfig, parseCustomAIConfig, type CustomAIConfig } from "@/lib/ai-config";
 import { supabase } from "@/lib/db";
 import { rumahSakit } from "@/lib/db/schema";
+import { getCurrentUser, isAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const user = await getCurrentUser();
+  if (!isAdmin(user)) return NextResponse.json({ sukses: false, pesan: "Hanya admin yang dapat menguji konfigurasi AI." }, { status: 403 });
   try {
     const body = await req.json().catch(() => ({}));
     const customConfig: CustomAIConfig | null = body.customAI ? {
