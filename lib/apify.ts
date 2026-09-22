@@ -441,25 +441,37 @@ export async function perbaruiDrafBalasan(ulasanId: number, draf: string) {
 }
 
 export async function ambilStatistikHarian(rumahSakitId: number, tanggal?: Date | null) {
-  let query = supabase.from(ulasan).select("*").eq("rumah_sakit_id", rumahSakitId);
+  const awalHari = tanggal ? new Date(tanggal) : null;
+  awalHari?.setHours(0, 0, 0, 0);
+  const akhirHari = awalHari ? new Date(awalHari) : null;
+  akhirHari?.setDate(akhirHari.getDate() + 1);
 
-  if (tanggal) {
-    const awalHari = new Date(tanggal);
-    awalHari.setHours(0, 0, 0, 0);
-    const akhirHari = new Date(tanggal);
-    akhirHari.setHours(23, 59, 59, 999);
-    query = query.gte("tanggal_ulasan", awalHari.toISOString()).lt("tanggal_ulasan", akhirHari.toISOString());
-  }
+  const hitung = async (filter?: { kolom: string; nilai: string | boolean }) => {
+    let query = supabase
+      .from(ulasan)
+      .select("id", { count: "exact", head: true })
+      .eq("rumah_sakit_id", rumahSakitId);
 
-  const { data: rowsRaw } = await query.order("tanggal_ulasan", { ascending: false });
-  const rows = toCamel<UlasanRow[]>(rowsRaw ?? []);
+    if (awalHari && akhirHari) {
+      query = query
+        .gte("tanggal_ulasan", awalHari.toISOString())
+        .lt("tanggal_ulasan", akhirHari.toISOString());
+    }
+    if (filter) query = query.eq(filter.kolom, filter.nilai);
 
-  const total = rows.length;
-  const positif = rows.filter((r) => r.sentimen === "positif").length;
-  const negatif = rows.filter((r) => r.sentimen === "negatif").length;
-  const netral = rows.filter((r) => r.sentimen === "netral").length;
-  const krisis = rows.filter((r) => r.faktorUrgensiMedis === true).length;
-  const belumDitinjau = rows.filter((r) => r.statusTindakLanjut === "baru").length;
+    const { count, error } = await query;
+    if (error) throw new Error(`Gagal menghitung statistik jurnal: ${error.message}`);
+    return count ?? 0;
+  };
+
+  const [total, positif, negatif, netral, krisis, belumDitinjau] = await Promise.all([
+    hitung(),
+    hitung({ kolom: "sentimen", nilai: "positif" }),
+    hitung({ kolom: "sentimen", nilai: "negatif" }),
+    hitung({ kolom: "sentimen", nilai: "netral" }),
+    hitung({ kolom: "faktor_urgensi_medis", nilai: true }),
+    hitung({ kolom: "status_tindak_lanjut", nilai: "baru" }),
+  ]);
 
   return { total, positif, negatif, netral, krisis, belumDitinjau };
 }

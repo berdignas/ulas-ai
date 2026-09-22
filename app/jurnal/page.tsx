@@ -105,7 +105,6 @@ export default function JurnalPage() {
   const [krisisOnly, setKrisisOnly] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [lastSyncStr, setLastSyncStr] = useState<string | null>(null);
-  const [lastSyncDate, setLastSyncDate] = useState<Date | null>(null);
   const [syncAlertMessage, setSyncAlertMessage] = useState<string | null>(null);
   const [selectedUlasanDetail, setSelectedUlasanDetail] = useState<Ulasan | null>(null);
   const [page, setPage] = useState(0);
@@ -194,7 +193,6 @@ export default function JurnalPage() {
       const data = await res.json();
       if (data.riwayat?.[0]?.selesaiPada) {
         const d = new Date(data.riwayat[0].selesaiPada);
-        setLastSyncDate(d);
         setLastSyncStr(format(d, "HH:mm", { locale: localeId }));
       }
     } catch (e) {
@@ -203,33 +201,26 @@ export default function JurnalPage() {
   }, [rumahSakitId]);
 
   useEffect(() => {
-    // Pemanggilan ini menyinkronkan tampilan dengan API setiap kali filter berubah.
+    // Sinkronkan daftar ketika RS, filter, atau halaman berubah.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchData();
-    fetchStatistik();
-    fetchKrisisCount();
-    fetchLastSync();
-  }, [fetchData, fetchStatistik, fetchKrisisCount, fetchLastSync]);
+    void fetchData();
+  }, [fetchData]);
 
-  const isSyncedToday = useCallback(() => {
-    if (!lastSyncDate) return false;
-    const now = new Date();
-    return (
-      lastSyncDate.getDate() === now.getDate() &&
-      lastSyncDate.getMonth() === now.getMonth() &&
-      lastSyncDate.getFullYear() === now.getFullYear()
-    );
-  }, [lastSyncDate]);
+  useEffect(() => {
+    // Statistik hanya bergantung pada RS dan tanggal, bukan pagination/filter tabel.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchStatistik();
+  }, [fetchStatistik]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchKrisisCount();
+    void fetchLastSync();
+  }, [fetchKrisisCount, fetchLastSync]);
 
   const handleSync = async (periode: PeriodeScraping = "1d") => {
     if (!rumahSakitId) return;
     setSyncAlertMessage(null);
-
-    // Cek apakah hari ini sudah pernah dilakukan penarikan data
-    if (periode === "1d" && isSyncedToday()) {
-      setSyncAlertMessage("Hari ini sudah dilakukan penarikan data.");
-      return;
-    }
 
     setSyncLoading(true);
     try {
