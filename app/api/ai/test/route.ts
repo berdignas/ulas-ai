@@ -34,7 +34,7 @@ export async function POST(req: Request) {
           .single();
         if (data?.ai_api_key) {
           const saved = parseCustomAIConfig(data.ai_api_key);
-          if (saved?.apiKey) {
+          if (saved?.apiKey && saved.baseUrl === customConfig.baseUrl) {
             customConfig.apiKey = saved.apiKey;
           }
         }
@@ -75,8 +75,6 @@ export async function POST(req: Request) {
         ? { contents: [{ parts: [{ text: "Balas hanya dengan kata OK" }] }] }
         : {
             model: config.model,
-            temperature: 0,
-            max_tokens: 8,
             messages: [{ role: "user", content: "Balas hanya dengan kata OK" }],
           }),
     });

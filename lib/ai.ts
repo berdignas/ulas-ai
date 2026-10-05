@@ -644,6 +644,27 @@ export async function parseResponseJson<T = unknown>(res: Response): Promise<T> 
   }
 }
 
+async function fetchCustomChatCompletions(
+  url: string,
+  options: Omit<RequestInit, "body"> & { body: Record<string, unknown> }
+): Promise<Response> {
+  const { body, ...requestOptions } = options;
+  const send = (payload: Record<string, unknown>) =>
+    fetch(url, { ...requestOptions, body: JSON.stringify(payload) });
+  const response = await send(body);
+  if (response.status !== 400 && response.status !== 422) return response;
+
+  const detail = await response.clone().text().catch(() => "");
+  if (!/(response_format|temperature)/i.test(detail)) return response;
+
+  // Beberapa endpoint Chat Completions menerima model dan messages, tetapi
+  // menolak opsi tambahan. Prompt tetap meminta JSON pada percobaan kedua.
+  const minimalBody = { ...body };
+  delete minimalBody.response_format;
+  delete minimalBody.temperature;
+  return send(minimalBody);
+}
+
 async function callOnce(
   teksUlasan: string,
   rating: number | null,
@@ -661,13 +682,13 @@ async function callOnce(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await fetchCustomChatCompletions(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
+      body: {
         model,
         temperature: 0,
         response_format: { type: "json_object" },
@@ -678,7 +699,7 @@ async function callOnce(
             content: JSON.stringify({ rating, ulasan: teksUlasan }),
           },
         ],
-      }),
+      },
       signal: controller.signal,
     });
 
@@ -1089,13 +1110,13 @@ async function callOnceOpenAIBatch(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await fetchCustomChatCompletions(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
+      body: {
         model: activeModel,
         temperature: 0,
         response_format: { type: "json_object" },
@@ -1116,7 +1137,7 @@ async function callOnceOpenAIBatch(
             }),
           },
         ],
-      }),
+      },
       signal: controller.signal,
     });
 

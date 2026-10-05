@@ -175,10 +175,8 @@ export async function PUT(req: Request) {
           const oldConfig = parseCustomAIConfig(currentRS?.[0]?.ai_api_key);
           if (oldConfig) {
             updatePayload.aiApiKey = JSON.stringify({
-              ...oldConfig,
-              providerName: cleaned.providerName || oldConfig.providerName,
-              baseUrl: cleaned.baseUrl || oldConfig.baseUrl,
-              model: cleaned.model || oldConfig.model,
+              ...cleaned,
+              apiKey: oldConfig.baseUrl === cleaned.baseUrl ? oldConfig.apiKey : "",
             });
           } else {
             updatePayload.aiApiKey = JSON.stringify(cleaned);

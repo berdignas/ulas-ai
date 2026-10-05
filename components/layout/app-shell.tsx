@@ -104,6 +104,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           defaultModel?: string;
           models?: Array<{ id: string; label: string; configured: boolean }>;
         };
+        if (savedModel?.startsWith("custom:")) {
+          const rsRes = await fetch("/api/rumah-sakit");
+          if (rsRes.ok) {
+            const rsData = await rsRes.json() as {
+              rumahSakit?: Array<{
+                aiModel?: string | null;
+                customAI?: { providerName: string; model: string; baseUrl: string; hasApiKey: boolean } | null;
+              }>;
+            };
+            const custom = rsData.rumahSakit?.find((rs) => rs.aiModel === savedModel)?.customAI;
+            if (custom) {
+              setAiModelName(`${custom.providerName} · ${custom.model}`);
+              setAiModelConfigured(custom.hasApiKey || /localhost|127\.0\.0\.1/.test(custom.baseUrl));
+              return;
+            }
+          }
+        }
         const active = data.models?.find((model) => model.id === (savedModel || data.defaultModel));
         setAiModelName(active?.label ?? savedModel ?? data.defaultModel ?? "Belum dipilih");
         setAiModelConfigured(Boolean(active?.configured));

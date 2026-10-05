@@ -363,6 +363,33 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
     };
 
     const batches = buatBatchAdaptif(belumDiproses);
+    // Siapkan satu batch AI berikutnya saat hasil batch saat ini disimpan.
+    // Bungkus penolakan segera agar request yang selesai lebih dulu tidak
+    // menghasilkan unhandled rejection sebelum gilirannya dibaca.
+    const mintaHasilAI = (batch: UlasanRow[]) =>
+      analisisBatchUlasanDenganAI(
+        batch.map((item) => ({ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null, namaPengulas: item.namaPengulas ?? null })),
+        modelAI,
+        daftarLokasi,
+        {
+          onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs }) => {
+            if (await adaPermintaanBerhenti(analisisId)) {
+              throw new Error("Analisis dihentikan oleh pengguna.");
+            }
+            await supabase.from(analisis)
+              .update(toSnake({
+                catatan: `AI sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
+              }))
+              .eq("id", analisisId)
+              .eq("status", "berjalan");
+          },
+        },
+        customConfig
+      ).then(
+        (hasil) => ({ hasil, error: null }),
+        (error: unknown) => ({ hasil: null, error })
+      );
+    let hasilAIBerikutnya: ReturnType<typeof mintaHasilAI> | null = null;
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       if (await adaPermintaanBerhenti(analisisId)) break;
       const batch = batches[batchIndex];
@@ -371,27 +398,12 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       const mulaiBatch = Date.now();
 
       if (aiTersedia) {
-        try {
-          hasilBatch = await analisisBatchUlasanDenganAI(
-            batch.map((item) => ({ id: item.id, teksUlasan: item.teksUlasan, rating: item.rating ?? null, namaPengulas: item.namaPengulas ?? null })),
-            modelAI,
-            daftarLokasi,
-            {
-              onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs }) => {
-                if (await adaPermintaanBerhenti(analisisId)) {
-                  throw new Error("Analisis dihentikan oleh pengguna.");
-                }
-                await supabase.from(analisis)
-                  .update(toSnake({
-                    catatan: `AI sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
-                  }))
-                  .eq("id", analisisId)
-                  .eq("status", "berjalan");
-              },
-            },
-            customConfig
-          );
-        } catch (errorAI) {
+        const responsAI = await (hasilAIBerikutnya ?? mintaHasilAI(batch));
+        hasilAIBerikutnya = null;
+        if (responsAI.hasil) {
+          hasilBatch = responsAI.hasil;
+        } else {
+          const errorAI = responsAI.error;
           const info = getAIErrorInfo(errorAI);
           errorAITerakhir = info;
           console.warn(`[ai] batch ${batchIndex + 1}/${batches.length} gagal (${info.code}): ${info.message}`);
@@ -422,6 +434,9 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       // Bila pengguna menghentikan analisis saat request AI aktif, abaikan hasil
       // batch tersebut agar checkpoint tetap konsisten dengan data yang tampil.
       if (await adaPermintaanBerhenti(analisisId)) break;
+      if (aiTersedia && !errorPermanenBatch && batchIndex + 1 < batches.length) {
+        hasilAIBerikutnya = mintaHasilAI(batches[batchIndex + 1]);
+      }
 
       const relasiAspek: Array<{
         ulasanId: number;

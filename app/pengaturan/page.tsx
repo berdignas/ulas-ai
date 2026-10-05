@@ -439,6 +439,10 @@ function PengaturanContent() {
 
   const selectedRS = rumahSakitList.find((rs) => rs.id === selectedId);
   const selectedModel = modelOptions.find((model) => model.id === form.aiModel);
+  const savedCustomKeyAvailable = Boolean(
+    selectedRS?.customAI?.hasApiKey &&
+    selectedRS.customAI.baseUrl === customAIForm.baseUrl.trim().replace(/\/chat\/completions\/?$/i, "").replace(/\/$/, "")
+  );
 
   if (loading) {
     return <LoadingSection rows={3} />;
@@ -700,7 +704,7 @@ function PengaturanContent() {
                   >
                     {isCustomAI
                       ? customAIForm.baseUrl && customAIForm.model
-                        ? (customAIForm.apiKey.trim() || selectedRS?.customAI?.hasApiKey || customAIForm.baseUrl.includes("localhost") || customAIForm.baseUrl.includes("127.0.0.1")
+                        ? (customAIForm.apiKey.trim() || savedCustomKeyAvailable || customAIForm.baseUrl.includes("localhost") || customAIForm.baseUrl.includes("127.0.0.1")
                             ? "Siap digunakan"
                             : "API Key belum diisi")
                         : "Konfigurasi belum lengkap"
@@ -975,7 +979,7 @@ function PengaturanContent() {
                             value={customAIForm.apiKey}
                             onChange={(e) => setCustomAIForm((p) => ({ ...p, apiKey: e.target.value }))}
                             placeholder={
-                              selectedRS?.customAI?.hasApiKey
+                              savedCustomKeyAvailable
                                 ? "•••••••• (Tersimpan - isi hanya jika ingin mengubah)"
                                 : "gsk_... / sk-or-..."
                             }
@@ -997,8 +1001,8 @@ function PengaturanContent() {
                           </button>
                         </div>
                         <p className="text-[11px] text-muted-foreground">
-                          {selectedRS?.customAI?.hasApiKey
-                            ? "API Key tersimpan aman di database. Kosongkan jika tidak ingin mengubah."
+                          {savedCustomKeyAvailable
+                            ? "API Key untuk provider ini sudah tersimpan. Kosongkan jika tidak ingin mengubah."
                             : "Tersimpan aman per rumah sakit di database. Kosongkan jika memakai Ollama lokal."}
                         </p>
                       </div>
