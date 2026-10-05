@@ -1,6 +1,7 @@
 import { supabase, toCamel, toSnake } from "./db";
 import { rumahSakit, ulasan, sinkronLog, analisis, RumahSakitRow, AnalisisRow, SinkronLogRow, UlasanRow } from "./db/schema";
 import { mulaiProsesAnalisis } from "./analyzer";
+import { antrekanAnalisis } from "./analysis-queue";
 
 export interface ApifyReview {
   reviewId: string;
@@ -360,7 +361,11 @@ export async function jalankanSinkronHarian(
 
       // OTOMATIS JALANKAN ANALISIS ASPEK & SENTIMEN NVIDIA AI
       if (ulasanBaru > 0) {
-        mulaiProsesAnalisis(analisisAktif.id);
+        if (process.env.VERCEL) {
+          await antrekanAnalisis(analisisAktif.id);
+        } else {
+          void mulaiProsesAnalisis(analisisAktif.id);
+        }
       } else {
         await supabase.from(analisis)
           .update(toSnake({ status: "selesai" }))

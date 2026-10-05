@@ -107,6 +107,8 @@ export default function JurnalPage() {
   const [lastSyncStr, setLastSyncStr] = useState<string | null>(null);
   const [syncAlertMessage, setSyncAlertMessage] = useState<string | null>(null);
   const [selectedUlasanDetail, setSelectedUlasanDetail] = useState<Ulasan | null>(null);
+  const [drafLoadingId, setDrafLoadingId] = useState<number | null>(null);
+  const [drafError, setDrafError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 20;
   const [analisisManualJalan, setAnalisisManualJalan] = useState<number | null>(null);
@@ -155,6 +157,26 @@ export default function JurnalPage() {
       setLoading(false);
     }
   }, [rumahSakitId, tanggal, statusFilter, ratingFilter, page, krisisOnly]);
+
+  const buatDrafBalasan = async (ulasanId: number) => {
+    setDrafLoadingId(ulasanId);
+    setDrafError(null);
+    try {
+      const res = await fetch("/api/jurnal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "buat_draf", ulasanId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.draf) throw new Error(data.error ?? "Gagal membuat draf balasan");
+      setSelectedUlasanDetail((item) => item?.id === ulasanId ? { ...item, saranDrafBalasan: data.draf } : item);
+      setUlasans((items) => items.map((item) => item.id === ulasanId ? { ...item, saranDrafBalasan: data.draf } : item));
+    } catch (error) {
+      setDrafError(error instanceof Error ? error.message : "Gagal membuat draf balasan");
+    } finally {
+      setDrafLoadingId(null);
+    }
+  };
 
   const fetchStatistik = useCallback(async () => {
     if (!rumahSakitId) return;
@@ -778,7 +800,7 @@ export default function JurnalPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-52">
                             <DropdownMenuItem
-                              onClick={() => setSelectedUlasanDetail(u)}
+                              onClick={() => { setDrafError(null); setSelectedUlasanDetail(u); }}
                               className="flex items-center gap-2 cursor-pointer"
                             >
                               <Eye className="size-4 text-muted-foreground" weight="duotone" />
@@ -922,6 +944,16 @@ export default function JurnalPage() {
                   <div className="p-3 bg-emerald-50/50 border border-emerald-200 rounded-lg text-xs leading-relaxed text-emerald-950">
                     {selectedUlasanDetail.saranDrafBalasan}
                   </div>
+                </div>
+              )}
+              {!selectedUlasanDetail.saranDrafBalasan && selectedUlasanDetail.sentimen && (
+                <div className="space-y-2 border-t pt-3">
+                  <Button variant="outline" size="sm" disabled={drafLoadingId === selectedUlasanDetail.id}
+                    onClick={() => void buatDrafBalasan(selectedUlasanDetail.id)}>
+                    {drafLoadingId === selectedUlasanDetail.id ? <SpinnerGap className="size-4 animate-spin" /> : <Sparkle className="size-4" />}
+                    {drafLoadingId === selectedUlasanDetail.id ? "Membuat draf..." : "Buat Draf Balasan dengan AI"}
+                  </Button>
+                  {drafError && <p className="text-xs text-destructive" role="alert">{drafError}</p>}
                 </div>
               )}
               </div>

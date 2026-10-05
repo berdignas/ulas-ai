@@ -73,7 +73,10 @@ export function personalisasiDrafBalasan(
 }
 
 export interface AIAnalisisCallbacks {
-  onRetry?: (info: { percobaanBerikutnya: number; maksimumPercobaan: number; jedaMs: number; error: string }) => void | Promise<void>;
+  onRetry?: (info: { percobaanBerikutnya: number; maksimumPercobaan: number; jedaMs: number; error: string; code: string }) => void | Promise<void>;
+  maxAttempts?: number;
+  timeoutMs?: number;
+  fast?: boolean;
 }
 
 export const UNIT_LAYANAN_VALID: readonly UnitLayanan[] = [
@@ -168,6 +171,9 @@ MODE BATCH (aturan ini menggantikan format jawaban tunggal di atas):
 - Balas hanya dengan JSON valid berbentuk:
 {"hasil":[{"id":number,"unitLayanan":string,"kategoriMasalah":string,"sentimen":string,"faktorUrgensiMedis":boolean,"saranDrafBalasan":string,"kepercayaan":number,"lokasiLayanan":string[],"aspek":[{"aspek":string,"sentimen":string,"kutipan":string}]}]}`;
 
+const FAST_BATCH_SYSTEM_PROMPT = `Analisis setiap ulasan pasien secara independen dalam bahasa Indonesia. Balas HANYA JSON valid berbentuk {"hasil":[{"id":number,"unitLayanan":string,"kategoriMasalah":string,"sentimen":string,"faktorUrgensiMedis":boolean,"kepercayaan":number,"lokasiLayanan":string[],"aspek":[{"aspek":string,"sentimen":string,"kutipan":string}]}]}.
+Salin id input persis dan sertakan semua ulasan. sentimen harus positif, negatif, atau netral. unitLayanan: IGD, Farmasi, Poliklinik/Dokter, Rawat Inap, Kasir/BPJS, Fasilitas & Parkir, atau Lainnya. kategoriMasalah: Waktu Tunggu, Keramahan Staf, Kebersihan, Akurasi Administrasi, Kompetensi Medis, atau Lainnya. faktorUrgensiMedis true hanya untuk krisis medis serius atau indikasi kelalaian berisiko nyawa. aspek maksimal tiga dari daftar: ${ASPEK_UMUM.join(", ")}; tiap aspek memiliki sentimen dan kutipan asli maksimal 120 karakter. lokasiLayanan maksimal tiga nama dari daftar lokasi yang diberikan, atau array kosong. kepercayaan angka 0 sampai 1. Jangan membuat draf balasan.`;
+
 const ASPEK_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -230,7 +236,10 @@ function singleResponseSchema(lokasi: LokasiLayananReferensi[]) {
   };
 }
 
-function batchResponseSchema(items: InputAnalisisUlasan[], lokasi: LokasiLayananReferensi[]) {
+function batchResponseSchema(items: InputAnalisisUlasan[], lokasi: LokasiLayananReferensi[], fast = false) {
+  const fastProperties = Object.fromEntries(
+    Object.entries(propertiHasil(lokasi)).filter(([key]) => key !== "saranDrafBalasan")
+  );
   return {
     type: "object",
     additionalProperties: false,
@@ -244,9 +253,9 @@ function batchResponseSchema(items: InputAnalisisUlasan[], lokasi: LokasiLayanan
           additionalProperties: false,
           properties: {
             id: { type: "integer", enum: items.map((item) => item.id) },
-            ...propertiHasil(lokasi),
+            ...(fast ? fastProperties : propertiHasil(lokasi)),
           },
-          required: ["id", ...HASIL_JSON_REQUIRED, "lokasiLayanan"],
+          required: ["id", ...HASIL_JSON_REQUIRED.filter((item) => !fast || item !== "saranDrafBalasan"), "lokasiLayanan"],
         },
       },
     },
@@ -254,14 +263,15 @@ function batchResponseSchema(items: InputAnalisisUlasan[], lokasi: LokasiLayanan
   };
 }
 
-function promptDenganLokasi(lokasi: LokasiLayananReferensi[]): string {
-  if (lokasi.length === 0) return `${SYSTEM_PROMPT}\n\nDAFTAR LOKASI RS: belum dikonfigurasi.`;
+function promptDenganLokasi(lokasi: LokasiLayananReferensi[], fast = false): string {
+  const prompt = fast ? FAST_BATCH_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  if (lokasi.length === 0) return `${prompt}\n\nDAFTAR LOKASI RS: belum dikonfigurasi.`;
   const daftar = lokasi
     .filter((item) => item.aktif !== false)
     .slice(0, 200)
     .map((item) => `- ${item.nama} [${item.jenis}]${item.kataKunci.length ? `; alias: ${item.kataKunci.slice(0, 5).join(", ")}` : ""}`)
     .join("\n");
-  return `${SYSTEM_PROMPT}\n\nDAFTAR LOKASI RS (gunakan nama persis):\n${daftar}`;
+  return `${prompt}\n\nDAFTAR LOKASI RS (gunakan nama persis):\n${daftar}`;
 }
 
 function geminiThinkingConfig(model: string) {
@@ -429,10 +439,10 @@ export async function analisisBatchUlasanDenganAI(
   const config = resolveAIConfig(preferredModel, customConfig);
   if (config.provider !== "gemini") {
     let lastError: unknown = null;
-    const maksimumPercobaan = 4;
+    const maksimumPercobaan = callbacks.maxAttempts ?? 4;
     for (let jumlahPercobaan = 0; jumlahPercobaan < maksimumPercobaan; jumlahPercobaan++) {
       try {
-        return await callOnceOpenAIBatch(items, 60_000, config.model, lokasi, customConfig);
+        return await callOnceOpenAIBatch(items, callbacks.timeoutMs ?? 60_000, config.model, lokasi, customConfig, callbacks.fast);
       } catch (error) {
         lastError = error;
         const retryable =
@@ -450,12 +460,13 @@ export async function analisisBatchUlasanDenganAI(
           maksimumPercobaan,
           jedaMs: jeda,
           error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+          code: getAIErrorInfo(error).code,
         });
         await new Promise((resolve) => setTimeout(resolve, jeda));
       }
     }
 
-    if (lastError instanceof RetryableError || lastError instanceof TypeError ||
+    if (callbacks.fast || lastError instanceof RetryableError || lastError instanceof TypeError ||
         (lastError instanceof Error && lastError.name === "AbortError")) {
       throw lastError;
     }
@@ -476,7 +487,7 @@ export async function analisisBatchUlasanDenganAI(
   const maksimumPercobaan = 2;
   for (let jumlahPercobaan = 0; jumlahPercobaan < maksimumPercobaan; jumlahPercobaan++) {
     try {
-      return await callOnceGeminiBatch(items, 60_000, config.model, lokasi);
+      return await callOnceGeminiBatch(items, callbacks.timeoutMs ?? 60_000, config.model, lokasi, callbacks.fast);
     } catch (error) {
       lastError = error;
       const retryable = error instanceof RetryableError || error instanceof TypeError ||
@@ -491,13 +502,14 @@ export async function analisisBatchUlasanDenganAI(
         percobaanBerikutnya: jumlahPercobaan + 2,
         maksimumPercobaan,
         jedaMs: jeda,
-        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+          error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+          code: getAIErrorInfo(error).code,
       });
       await new Promise((resolve) => setTimeout(resolve, jeda));
     }
   }
 
-  if (lastError instanceof RetryableError || lastError instanceof TypeError ||
+  if (callbacks.fast || lastError instanceof RetryableError || lastError instanceof TypeError ||
       (lastError instanceof Error && lastError.name === "AbortError")) {
     throw lastError;
   }
@@ -1014,7 +1026,8 @@ async function callOnceGeminiBatch(
   items: InputAnalisisUlasan[],
   timeoutMs: number,
   model: string,
-  lokasi: LokasiLayananReferensi[] = []
+  lokasi: LokasiLayananReferensi[] = [],
+  fast = false
 ): Promise<Map<number, HasilAnalisisUlasan>> {
   const { apiKey } = getEnvGemini();
   await tungguGiliranGemini();
@@ -1027,10 +1040,10 @@ async function callOnceGeminiBatch(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: `${promptDenganLokasi(lokasi)}\n\n${BATCH_SYSTEM_PROMPT.slice(SYSTEM_PROMPT.length)}` }] },
+        systemInstruction: { parts: [{ text: fast ? promptDenganLokasi(lokasi, true) : `${promptDenganLokasi(lokasi)}\n\n${BATCH_SYSTEM_PROMPT.slice(SYSTEM_PROMPT.length)}` }] },
         generationConfig: {
           responseMimeType: "application/json",
-          responseJsonSchema: batchResponseSchema(items, lokasi),
+          responseJsonSchema: batchResponseSchema(items, lokasi, fast),
           thinkingConfig: geminiThinkingConfig(model),
         },
         contents: [{
@@ -1097,7 +1110,8 @@ async function callOnceOpenAIBatch(
   timeoutMs: number,
   model: string,
   lokasi: LokasiLayananReferensi[] = [],
-  customConfig?: CustomAIConfig | null
+  customConfig?: CustomAIConfig | null,
+  fast = false
 ): Promise<Map<number, HasilAnalisisUlasan>> {
   const env = getEnv();
   const rawKey = customConfig?.apiKey || env.apiKey;
@@ -1123,7 +1137,7 @@ async function callOnceOpenAIBatch(
         messages: [
           {
             role: "system",
-            content: `${promptDenganLokasi(lokasi)}\n\n${BATCH_SYSTEM_PROMPT.slice(SYSTEM_PROMPT.length)}`,
+            content: fast ? promptDenganLokasi(lokasi, true) : `${promptDenganLokasi(lokasi)}\n\n${BATCH_SYSTEM_PROMPT.slice(SYSTEM_PROMPT.length)}`,
           },
           {
             role: "user",

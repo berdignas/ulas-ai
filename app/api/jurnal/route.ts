@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { supabase, toCamel } from "@/lib/db";
+import { supabase, toCamel, toSnake } from "@/lib/db";
 import { ulasan, rumahSakit, UlasanRow, RumahSakitRow } from "@/lib/db/schema";
 import { ambilUlasanKrisisBelumDitinjau, ambilStatistikHarian, perbaruiStatusTindakLanjut, perbaruiDrafBalasan } from "@/lib/apify";
+import { aiConfigured, analisisUlasanDenganAI, personalisasiDrafBalasan } from "@/lib/ai";
+import { parseCustomAIConfig } from "@/lib/ai-config";
 
 export const runtime = "nodejs";
 
@@ -75,6 +77,35 @@ export async function POST(req: Request) {
   const { action, ...params } = body;
 
   switch (action) {
+    case "buat_draf": {
+      const ulasanId = Number(params.ulasanId);
+      if (!Number.isSafeInteger(ulasanId) || ulasanId < 1) {
+        return NextResponse.json({ error: "ID ulasan tidak valid" }, { status: 400 });
+      }
+      const { data: item, error: readError } = await supabase.from(ulasan)
+        .select("id, rumah_sakit_id, teks_ulasan, rating, nama_pengulas, faktor_urgensi_medis, saran_draf_balasan")
+        .eq("id", ulasanId).single();
+      if (readError || !item) return NextResponse.json({ error: "Ulasan tidak ditemukan" }, { status: 404 });
+      if (item.saran_draf_balasan) return NextResponse.json({ draf: item.saran_draf_balasan });
+      const { data: rs } = await supabase.from(rumahSakit)
+        .select("ai_model, ai_api_key").eq("id", item.rumah_sakit_id).single();
+      const customConfig = parseCustomAIConfig(rs?.ai_api_key);
+      if (!aiConfigured(rs?.ai_model, customConfig)) {
+        return NextResponse.json({ error: "Provider AI belum dikonfigurasi" }, { status: 503 });
+      }
+      try {
+        const hasil = await analisisUlasanDenganAI(item.teks_ulasan, item.rating, rs?.ai_model, [], customConfig);
+        const draf = personalisasiDrafBalasan(hasil.saranDrafBalasan, item.nama_pengulas, item.faktor_urgensi_medis);
+        if (!draf) throw new Error("AI tidak menghasilkan draf balasan");
+        const { error } = await supabase.from(ulasan)
+          .update(toSnake({ saranDrafBalasan: draf, diperbaruiPada: new Date().toISOString() }))
+          .eq("id", ulasanId);
+        if (error) throw error;
+        return NextResponse.json({ draf });
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Gagal membuat draf" }, { status: 502 });
+      }
+    }
     case "statistik_harian": {
       const { rumahSakitId, tanggal } = params;
       if (!rumahSakitId) return NextResponse.json({ error: "Parameter tidak lengkap" }, { status: 400 });

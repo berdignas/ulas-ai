@@ -29,6 +29,12 @@ Untuk instalasi yang sudah memakai schema lama, jalankan
 `supabase-schema-v3-layanan.sql` sekali melalui Supabase SQL Editor. Migrasi ini menambahkan
 pengaturan Poli/Ruangan, relasi lokasi review, dan status retry AI tanpa menghapus data lama.
 
+Untuk deployment Vercel, jalankan `supabase-analysis-worker.sql` sekali sebelum deploy.
+Analisis unggahan diproses melalui Vercel Queues dalam batch kecil; lease di database
+mencegah dua worker mengolah dataset yang sama. Endpoint status hanya membaca progres.
+Saat provider membatasi permintaan, batch dijadwalkan ulang. Draf balasan dibuat
+ketika tombol **Buat Draf Balasan dengan AI** dipilih pada detail ulasan.
+
 ## Konfigurasi AI
 
 Tambahkan konfigurasi Supabase dan kunci Gemini yang aktif ke `.env`:

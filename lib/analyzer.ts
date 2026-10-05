@@ -71,11 +71,11 @@ export async function hapusAspekYatim(): Promise<void> {
   }
 }
 
-export function mulaiProsesAnalisis(analisisId: number, hanyaSisa = false): Promise<void> | null {
+export function mulaiProsesAnalisis(analisisId: number, hanyaSisa = false, maxBatches = Infinity): Promise<boolean | number> | null {
   if (runningProcesses.has(analisisId)) return null;
   runningProcesses.add(analisisId);
   stopRequests.delete(analisisId);
-  return prosesAnalisis(analisisId, hanyaSisa).finally(() => {
+  return prosesAnalisis(analisisId, hanyaSisa, maxBatches).finally(() => {
     runningProcesses.delete(analisisId);
     stopRequests.delete(analisisId);
   });
@@ -226,16 +226,10 @@ export async function finalisasiAnalisisDihentikan(
   return { ...ringkasan, status, sisaUlasan };
 }
 
-async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<void> {
+async function prosesAnalisis(analisisId: number, hanyaSisa = false, maxBatches = Infinity): Promise<boolean | number> {
   const mulaiWaktuMs = Date.now();
   try {
-    // Hanya update status ke "berjalan" tanpa menghapus catatan/kondisiUmum.
-    // Penghapusan catatan/kondisiUmum sudah dilakukan di /process route berdasarkan
-    // apakah ini resume atau restart penuh. Di sini cukup pastikan status = berjalan.
-    await supabase.from(analisis)
-      .update(toSnake({ status: "berjalan" }))
-      .eq("id", analisisId);
-
+    if (await adaPermintaanBerhenti(analisisId)) return false;
     const daftarUlasan = await ambilSemuaUlasanAnalisis(analisisId);
     const rumahSakitId = daftarUlasan[0]?.rumahSakitId;
     const { data: konfigurasiRSRaw } = rumahSakitId
@@ -268,7 +262,7 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       : daftarUlasan.filter((u) => u.sumberLabel === "ai");        // hanya ai
 
     const idBelum = belumDiproses.map((u) => u.id);
-    if (idBelum.length > 0) {
+    if (!hanyaSisa && idBelum.length > 0) {
       await supabase.from(hasilAspekUlasan).delete().in("ulasan_id", idBelum);
       if (schemaV3Tersedia) {
         await supabase.from(hasilLokasiUlasan).delete().in("ulasan_id", idBelum);
@@ -327,11 +321,9 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
           unitLayanan = hasil.unitLayanan;
           kategoriMasalah = hasil.kategoriMasalah;
           faktorUrgensiMedis = hasil.faktorUrgensiMedis;
-          saranDrafBalasan = personalisasiDrafBalasan(
-            hasil.saranDrafBalasan,
-            item.namaPengulas,
-            hasil.faktorUrgensiMedis
-          );
+          saranDrafBalasan = hasil.saranDrafBalasan
+            ? personalisasiDrafBalasan(hasil.saranDrafBalasan, item.namaPengulas, hasil.faktorUrgensiMedis)
+            : null;
           pakaiAI = true;
       } else {
         sentimen = sentimenFallbackDariRating(item.rating ?? null);
@@ -372,13 +364,16 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         modelAI,
         daftarLokasi,
         {
-          onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs }) => {
+          maxAttempts: Number.isFinite(maxBatches) ? 1 : 2,
+          timeoutMs: 45_000,
+          fast: true,
+          onRetry: async ({ percobaanBerikutnya, maksimumPercobaan, jedaMs, code }) => {
             if (await adaPermintaanBerhenti(analisisId)) {
               throw new Error("Analisis dihentikan oleh pengguna.");
             }
             await supabase.from(analisis)
               .update(toSnake({
-                catatan: `AI sedang membatasi permintaan. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
+                catatan: `${code === "HTTP_429" ? "Provider membatasi permintaan" : code === "AbortError" ? "Provider belum merespons" : "Provider sedang bermasalah"}. Mencoba lagi dalam ${Math.ceil(jedaMs / 1000)} detik (${percobaanBerikutnya}/${maksimumPercobaan}). Hasil yang sudah selesai tetap aman.`,
               }))
               .eq("id", analisisId)
               .eq("status", "berjalan");
@@ -390,9 +385,18 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         (error: unknown) => ({ hasil: null, error })
       );
     let hasilAIBerikutnya: ReturnType<typeof mintaHasilAI> | null = null;
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    for (let batchIndex = 0; batchIndex < Math.min(batches.length, maxBatches); batchIndex++) {
       if (await adaPermintaanBerhenti(analisisId)) break;
       const batch = batches[batchIndex];
+      if (hanyaSisa) {
+        const idBatch = batch.map((item) => item.id);
+        const { error: aspekError } = await supabase.from(hasilAspekUlasan).delete().in("ulasan_id", idBatch);
+        if (aspekError) throw new Error(`Gagal membersihkan relasi aspek: ${aspekError.message}`);
+        if (schemaV3Tersedia) {
+          const { error: lokasiError } = await supabase.from(hasilLokasiUlasan).delete().in("ulasan_id", idBatch);
+          if (lokasiError) throw new Error(`Gagal membersihkan relasi lokasi: ${lokasiError.message}`);
+        }
+      }
       let hasilBatch = new Map<number, HasilAnalisisUlasan>();
       let errorPermanenBatch: ReturnType<typeof getAIErrorInfo> | null = null;
       const mulaiBatch = Date.now();
@@ -407,6 +411,14 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
           const info = getAIErrorInfo(errorAI);
           errorAITerakhir = info;
           console.warn(`[ai] batch ${batchIndex + 1}/${batches.length} gagal (${info.code}): ${info.message}`);
+          if (info.retryable && Number.isFinite(maxBatches)) {
+            if (await adaPermintaanBerhenti(analisisId)) break;
+            await supabase.from(analisis)
+              .update(toSnake({ catatan: `Provider AI sedang menunda respons (${info.code}). Batch ini akan dicoba lagi otomatis; hasil sebelumnya tetap aman.` }))
+              .eq("id", analisisId)
+              .eq("status", "berjalan");
+            return 60;
+          }
           if (info.retryable) {
             // Jangan menghentikan seluruh analisis hanya karena Gemini sedang
             // rate-limit/high demand. Batch tetap disimpan melalui fallback
@@ -434,7 +446,7 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
       // Bila pengguna menghentikan analisis saat request AI aktif, abaikan hasil
       // batch tersebut agar checkpoint tetap konsisten dengan data yang tampil.
       if (await adaPermintaanBerhenti(analisisId)) break;
-      if (aiTersedia && !errorPermanenBatch && batchIndex + 1 < batches.length) {
+      if (aiTersedia && !errorPermanenBatch && batchIndex + 1 < Math.min(batches.length, maxBatches)) {
         hasilAIBerikutnya = mintaHasilAI(batches[batchIndex + 1]);
       }
 
@@ -489,19 +501,21 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         }
       }
 
+      if (relasiAspek.length > 0) {
+        const { error } = await supabase.from(hasilAspekUlasan).insert(toSnake(relasiAspek));
+        if (error) throw new Error(`Gagal menyimpan relasi aspek: ${error.message}`);
+      }
+      if (schemaV3Tersedia && relasiLokasi.length > 0) {
+        const { error } = await supabase.from(hasilLokasiUlasan).upsert(toSnake(relasiLokasi), {
+          onConflict: "ulasan_id,lokasi_layanan_id",
+        });
+        if (error) throw new Error(`Gagal menyimpan relasi lokasi: ${error.message}`);
+      }
       const hasilSimpan = await Promise.all(batch.map((item) => simpanSatuUlasan(
         item,
         hasilBatch.get(item.id) ?? null,
         errorPermanenBatch
       )));
-      if (relasiAspek.length > 0) {
-        await supabase.from(hasilAspekUlasan).insert(toSnake(relasiAspek));
-      }
-      if (schemaV3Tersedia && relasiLokasi.length > 0) {
-        await supabase.from(hasilLokasiUlasan).upsert(toSnake(relasiLokasi), {
-          onConflict: "ulasan_id,lokasi_layanan_id",
-        });
-      }
 
       // Progress hanya bertambah untuk ulasan yang benar-benar memperoleh label.
       // Ulasan gagal tetap menjadi sisa dan akan dicoba pada proses berikutnya.
@@ -529,7 +543,7 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         totalUlasanAktual,
         `Analisis dihentikan karena ${terhentiTanpaKemajuan}`
       );
-      return;
+      return false;
     }
 
     if (await adaPermintaanBerhenti(analisisId)) {
@@ -539,8 +553,10 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         totalUlasanAktual,
         "Analisis dihentikan oleh pengguna"
       );
-      return;
+      return false;
     }
+
+    if (batches.length > maxBatches) return true;
 
     const totalUlasan = await ambilTotalUlasanAktual(analisisId, daftarUlasan.length);
     const ringkasan = await hitungRingkasanAnalisis(analisisId);
@@ -552,7 +568,7 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         totalUlasan,
         "Analisis dihentikan karena sebagian ulasan belum berhasil memperoleh label"
       );
-      return;
+      return false;
     }
 
     const stats = {
@@ -595,11 +611,13 @@ async function prosesAnalisis(analisisId: number, hanyaSisa = false): Promise<vo
         catatan: catatan.join(" "),
       }))
       .eq("id", analisisId);
+    return false;
   } catch (error) {
     const pesan = error instanceof Error ? error.message : "Kesalahan tidak diketahui";
     await supabase.from(analisis)
       .update(toSnake({ status: "gagal", catatan: `Proses analisis gagal: ${pesan}` }))
       .eq("id", analisisId);
+    return false;
   }
 }
 

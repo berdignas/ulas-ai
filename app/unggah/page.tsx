@@ -79,6 +79,7 @@ function UnggahInner() {
   const [error, setError] = useState<string | null>(null);
   const [unggahBerjalan, setUnggahBerjalan] = useState(false);
   const [progres, setProgres] = useState({ diproses: 0, total: 0 });
+  const [catatanProgres, setCatatanProgres] = useState<string | null>(null);
   const [elapsedDetik, setElapsedDetik] = useState(0);
   const [durasiSelesai, setDurasiSelesai] = useState<string | null>(null);
   const [berhentiJalan, setBerhentiJalan] = useState(false);
@@ -104,6 +105,7 @@ function UnggahInner() {
           if (!res.ok) return;
           const data = await res.json();
           setProgres({ diproses: data.ulasanDiproses, total: data.totalUlasan });
+          setCatatanProgres(data.status === "berjalan" ? data.catatan ?? null : null);
           if (data.status === "selesai") {
             berhentiPolling();
             let finalDurasi = ekstraksiDurasiDariCatatan(data.catatan);
@@ -418,6 +420,9 @@ function UnggahInner() {
               </span>
             </div>
           </div>
+          {catatanProgres && (
+            <p className="mt-4 max-w-md text-sm text-amber-800" role="status">{catatanProgres}</p>
+          )}
           <Button
             variant="outline"
             onClick={hentikanAnalisis}

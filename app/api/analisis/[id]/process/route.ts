@@ -4,6 +4,7 @@ import { analisis, rumahSakit, ulasan, AnalisisRow } from "@/lib/db/schema";
 import { finalisasiAnalisisDihentikan, mulaiProsesAnalisis, prosesSedangBerjalan } from "@/lib/analyzer";
 import { aiConfigured } from "@/lib/ai";
 import { parseCustomAIConfig } from "@/lib/ai-config";
+import { antrekanAnalisis } from "@/lib/analysis-queue";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -41,7 +42,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   // Jika instance sebelumnya mati setelah status diubah menjadi berjalan,
   // lanjutkan hanya ulasan yang belum berlabel. Jangan memulai ulang dari nol.
   const hanyaSisa = item.status === "berhenti" ||
-    (item.status === "berjalan" && checkpointTersimpan > 0);
+    ((item.status === "berjalan" || item.status === "gagal") && checkpointTersimpan > 0);
 
   // Jangan membangun ulang ringkasan atau memulai worker baru sebelum worker
   // sebelumnya benar-benar keluar. Ini menutup celah klik ulang tepat setelah stop.
@@ -78,7 +79,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   // Data yang dihentikan oleh versi lama belum selalu mempunyai agregat hasil.
   // Bangun ringkasan parsial terlebih dahulu agar hasil lama langsung terlihat
   // saat pengguna memilih menganalisis sisa ulasan.
-  if (hanyaSisa) {
+  if (hanyaSisa && item.status === "berhenti") {
     try {
       const ringkasanParsial = await finalisasiAnalisisDihentikan(
         analisisId,
@@ -109,14 +110,32 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   // Saat menganalisis sisa (berhenti → berjalan), pertahankan hasil sebelumnya.
   // Saat mulai ulang penuh (selesai → berjalan), reset catatan dan kondisiUmum.
   const updatePayload = hanyaSisa
-    ? toSnake({ status: "berjalan" })
-    : toSnake({ status: "berjalan", catatan: null, kondisiUmum: null });
+    ? toSnake({ status: "berjalan", catatan: "Menunggu giliran pemrosesan batch berikutnya." })
+    : toSnake({ status: "berjalan", catatan: "Menunggu giliran pemrosesan batch pertama.", kondisiUmum: null });
   const { error: startError } = await supabase
     .from(analisis)
     .update(updatePayload)
     .eq("id", analisisId);
   if (startError) {
     return NextResponse.json({ error: `Gagal menandai analisis sebagai berjalan: ${startError.message}` }, { status: 500 });
+  }
+
+  if (process.env.VERCEL) {
+    try {
+      await antrekanAnalisis(analisisId);
+    } catch (error) {
+      const pesan = error instanceof Error ? error.message : "Gagal mengirim pekerjaan ke antrean.";
+      await supabase.from(analisis)
+        .update(toSnake({ status: "gagal", catatan: `Gagal memulai antrean analisis: ${pesan}` }))
+        .eq("id", analisisId)
+        .eq("status", "berjalan");
+      return NextResponse.json({ error: `Gagal memulai antrean analisis: ${pesan}` }, { status: 503 });
+    }
+    return NextResponse.json({
+      status: "berjalan", pakaiAI, model: modelAI, totalUlasan,
+      ulasanDiproses: checkpoint, sisaUlasan,
+      pesan: "Analisis masuk antrean dan akan diproses bertahap.",
+    });
   }
 
   const proses = mulaiProsesAnalisis(analisisId, hanyaSisa);
