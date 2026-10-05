@@ -84,6 +84,7 @@ function UnggahInner() {
   const [durasiSelesai, setDurasiSelesai] = useState<string | null>(null);
   const [berhentiJalan, setBerhentiJalan] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pemulihanDimulaiRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedDetikRef = useRef(0);
 
@@ -154,6 +155,15 @@ function UnggahInner() {
       const id = Number(lanjutId);
       if (Number.isFinite(id)) {
         pantauStatus(id);
+        if (pemulihanDimulaiRef.current !== id) {
+          pemulihanDimulaiRef.current = id;
+          void fetch(`/api/analisis/${id}/status`)
+            .then((res) => res.ok ? res.json() : null)
+            .then((data) => data?.status === "berjalan"
+              ? fetch(`/api/analisis/${id}/process`, { method: "POST" })
+              : null)
+            .catch(() => undefined);
+        }
       }
     }
     return berhentiPolling;

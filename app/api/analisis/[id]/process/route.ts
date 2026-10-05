@@ -22,6 +22,19 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: "Analisis tidak ditemukan." }, { status: 404 });
   }
 
+  if (item.status === "berjalan") {
+    const { data: worker } = await supabase.from("analisis_worker")
+      .select("lease_until").eq("analisis_id", analisisId).limit(1);
+    if (worker?.[0] && new Date(worker[0].lease_until).getTime() > Date.now()) {
+      return NextResponse.json({
+        status: "berjalan", totalUlasan: item.totalUlasan,
+        ulasanDiproses: item.ulasanDiproses,
+        sisaUlasan: Math.max(0, item.totalUlasan - item.ulasanDiproses),
+        pesan: "Analisis masih diproses oleh worker.",
+      });
+    }
+  }
+
   const { count: totalUlasanAktual, error: totalUlasanError } = await supabase
     .from(ulasan)
     .select("id", { count: "exact", head: true })
