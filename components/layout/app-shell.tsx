@@ -41,21 +41,20 @@ interface NavItem {
   href: string;
   label: string;
   icon: ComponentType<IconProps>;
-  step: number | null;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: House, step: null },
-  { href: "/jurnal", label: "Jurnal Harian", icon: ClipboardText, step: 2 },
-  { href: "/unggah", label: "Unggah Data", icon: UploadSimple, step: 1 },
-  { href: "/ulasan", label: "Daftar Ulasan", icon: Chats, step: 2 },
-  { href: "/aspek", label: "Analisis Aspek", icon: Tag, step: 3 },
-  { href: "/export", label: "Ekspor Laporan", icon: Download, step: 4 },
-  { href: "/pengaturan", label: "Pengaturan RS", icon: Gear, step: 5 },
-  { href: "/manajemen-akun", label: "Manajemen Akun", icon: UsersThree, step: null },
+  { href: "/", label: "Dashboard", icon: House },
+  { href: "/jurnal", label: "Jurnal Harian", icon: ClipboardText },
+  { href: "/unggah", label: "Unggah Data", icon: UploadSimple },
+  { href: "/ulasan", label: "Daftar Ulasan", icon: Chats },
+  { href: "/aspek", label: "Analisis Aspek", icon: Tag },
+  { href: "/export", label: "Ekspor Laporan", icon: Download },
+  { href: "/pengaturan", label: "Pengaturan RS", icon: Gear },
+  { href: "/manajemen-akun", label: "Manajemen Akun", icon: UsersThree },
 ];
 
-function SidebarLink({ href, label, icon: Icon, step }: NavItem) {
+function SidebarLink({ href, label, icon: Icon }: NavItem) {
   const pathname = usePathname();
   const aktif = href === "/" ? pathname === "/" : pathname.startsWith(href);
   return (
@@ -71,17 +70,6 @@ function SidebarLink({ href, label, icon: Icon, step }: NavItem) {
     >
       <Icon className="size-[18px] shrink-0" weight="regular" aria-hidden="true" />
       <span className="flex-1">{label}</span>
-      {step !== null && (
-        <span
-          aria-hidden="true"
-          className={cn(
-            "font-mono text-[11px]",
-            aktif ? "text-zinc-500" : "text-zinc-400"
-          )}
-        >
-          {String(step).padStart(2, "0")}
-        </span>
-      )}
     </Link>
   );
 }
@@ -253,7 +241,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                         >
                           <Icon className="size-5 shrink-0" weight={aktif ? "duotone" : "regular"} aria-hidden="true" />
                           <span className="flex-1">{item.label}</span>
-                          {item.step !== null && <span className="font-mono text-[11px] opacity-60" aria-hidden="true">{String(item.step).padStart(2, "0")}</span>}
                         </Link>
                       );
                     })}
