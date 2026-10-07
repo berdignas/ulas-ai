@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { type DateRange } from "react-day-picker";
 import { format } from "date-fns";
-import { id as localeId } from "date-fns/locale";
-import { CaretLeft, CaretRight, MagnifyingGlass } from "@phosphor-icons/react";
+import { CaretLeft, CaretRight, MagnifyingGlass, Trash } from "@phosphor-icons/react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/page-header";
 import { LoadingSection } from "@/components/states";
 import { SentimentBadge } from "@/components/sentiment-badge";
@@ -42,6 +42,38 @@ export default function UlasanPage() {
   const [hasil, setHasil] = useState<{ ulasan: UlasanItem[]; total: number }>({ ulasan: [], total: 0 });
   const [pernahDimuat, setPernahDimuat] = useState(false);
   const [dibuka, setDibuka] = useState<number | null>(null);
+  const [admin, setAdmin] = useState(false);
+  const [targetHapus, setTargetHapus] = useState<UlasanItem | null>(null);
+  const [menghapus, setMenghapus] = useState(false);
+  const [errorHapus, setErrorHapus] = useState("");
+  const [pesan, setPesan] = useState("");
+  const [muatUlang, setMuatUlang] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/auth/me").then((res) => res.json())
+      .then((data) => setAdmin(data.isAdmin === true)).catch(() => setAdmin(false));
+  }, []);
+
+  async function hapusUlasan() {
+    if (!targetHapus || menghapus) return;
+    setMenghapus(true);
+    setErrorHapus("");
+    try {
+      const res = await fetch(`/api/analisis/${targetHapus.analisisId}/ulasan/${targetHapus.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menghapus ulasan.");
+      setTargetHapus(null);
+      setDibuka(null);
+      setPesan("Ulasan berhasil dihapus. Jumlah ulasan dan sentimen telah diperbarui.");
+      setHasil((lama) => ({ ulasan: lama.ulasan.filter((item) => item.id !== targetHapus.id), total: Math.max(0, lama.total - 1) }));
+      if (hasil.ulasan.length === 1 && halaman > 1) setHalaman((value) => value - 1);
+      setMuatUlang((value) => value + 1);
+    } catch (error) {
+      setErrorHapus(error instanceof Error ? error.message : "Koneksi terputus. Silakan coba lagi.");
+    } finally {
+      setMenghapus(false);
+    }
+  }
 
   useEffect(() => {
     fetch("/api/analisis")
@@ -73,7 +105,10 @@ export default function UlasanPage() {
     if (dateRange?.to) params.set("sampai", format(dateRange.to, "yyyy-MM-dd"));
 
     fetch(`/api/analisis/${analisisId}/ulasan?${params.toString()}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Gagal memuat daftar ulasan.");
+        return res.json();
+      })
       .then((data: { ulasan: UlasanItem[]; total: number }) => {
         if (!aktif) return;
         setHasil({ ulasan: data.ulasan, total: data.total });
@@ -85,7 +120,7 @@ export default function UlasanPage() {
     return () => {
       aktif = false;
     };
-  }, [analisisId, sentimen, kataKunciKirim, dateRange, halaman]);
+  }, [analisisId, sentimen, kataKunciKirim, dateRange, halaman, muatUlang]);
 
   const memuat = analisisId !== null && !pernahDimuat;
   const { ulasan, total } = hasil;
@@ -135,6 +170,7 @@ export default function UlasanPage() {
         </div>
       </div>
 
+      {pesan && <p role="status" className="mb-4 text-sm text-muted-foreground">{pesan}</p>}
       {memuat ? (
         <LoadingSection rows={3} />
       ) : ulasan.length === 0 ? (
@@ -153,6 +189,7 @@ export default function UlasanPage() {
                 <TableHead className="sticky top-0 z-10 bg-card">Ulasan</TableHead>
                 <TableHead className="sticky top-0 z-10 w-28 bg-card">Sentimen</TableHead>
                 <TableHead className="sticky top-0 z-10 w-28 bg-card">Tanggal</TableHead>
+                {admin && <TableHead className="sticky top-0 z-10 w-24 bg-card">Aksi</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -186,6 +223,18 @@ export default function UlasanPage() {
                       <SentimentBadge value={item.sentimen} />
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs font-mono">{formatTanggal(item.tanggalUlasan)}</TableCell>
+                    {admin && <TableCell>
+                      <Button variant="ghost" size="sm" className="text-destructive" disabled={menghapus}
+                        aria-label={`Hapus ulasan ${item.namaPengulas ?? "tanpa nama"}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setErrorHapus("");
+                          setPesan("");
+                          setTargetHapus(item);
+                        }}>
+                        <Trash className="size-4" /> Hapus
+                      </Button>
+                    </TableCell>}
                   </TableRow>
                 );
               })}
@@ -219,6 +268,25 @@ export default function UlasanPage() {
           </div>
         </div>
       )}
+      <Dialog open={targetHapus !== null} onOpenChange={(open) => { if (!open && !menghapus) setTargetHapus(null); }}>
+        <DialogContent className="max-w-[min(32rem,calc(100vw-2rem))] rounded-xl">
+          <DialogHeader>
+            <DialogTitle>Hapus ulasan ini?</DialogTitle>
+            <DialogDescription>
+              Ulasan dan hasil analisis terkait akan dihapus permanen. Jumlah sentimen akan diperbarui dan ringkasan naratif lama dikosongkan. Tindakan ini tidak dapat dibatalkan.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-w-0">
+            <p className="mb-2 break-words text-sm font-semibold">{targetHapus?.namaPengulas ?? "Tanpa nama"}</p>
+            <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-sm text-muted-foreground">{targetHapus?.teksUlasan}</p>
+          </div>
+          {errorHapus && <p role="alert" className="text-sm text-destructive">{errorHapus}</p>}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" autoFocus disabled={menghapus} onClick={() => setTargetHapus(null)}>Batal</Button>
+            <Button variant="destructive" disabled={menghapus} onClick={hapusUlasan}>{menghapus ? "Menghapus..." : "Hapus ulasan"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
