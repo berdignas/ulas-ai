@@ -95,7 +95,7 @@ export default function DashboardPage() {
   const [trendPoints, setTrendPoints] = useState<TrendPoint[]>([]);
 
   const muatDaftar = useCallback(() => {
-    return fetch("/api/analisis")
+    return fetch("/api/analisis", { cache: "no-store" })
       .then((res) => res.json())
       .then((data: { analisis?: AnalisisItem[] }) => {
         const list = Array.isArray(data?.analisis) ? data.analisis : [];
@@ -119,7 +119,7 @@ export default function DashboardPage() {
       })
       .catch(() => undefined);
 
-    fetch("/api/analisis")
+    fetch("/api/analisis", { cache: "no-store" })
       .then((res) => res.json())
       .then((data: { analisis?: AnalisisItem[] }) => {
         const list = Array.isArray(data?.analisis) ? data.analisis : [];
@@ -139,6 +139,16 @@ export default function DashboardPage() {
       .catch(() => setDaftar([]))
       .finally(() => setMemuat(false));
   }, []);
+
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void muatDaftar(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [muatDaftar]);
 
   const statusAktif = (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih)?.status;
   useEffect(() => {
@@ -231,7 +241,7 @@ export default function DashboardPage() {
       return;
     }
     let aktif = true;
-    fetch(`/api/analisis/${dipilih}/tren`)
+    fetch(`/api/analisis/${dipilih}/tren?cakupan=semua`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data: { points?: TrendPoint[] }) => {
         if (aktif) setTrendPoints(Array.isArray(data.points) ? data.points : []);
@@ -242,7 +252,7 @@ export default function DashboardPage() {
     return () => {
       aktif = false;
     };
-  }, [dipilih, statusAktif]);
+  }, [dipilih, statusAktif, daftar]);
 
   const prosesUlangDenganAI = useCallback(async () => {
     if (dipilih === null || prosesUlangJalan) return;
@@ -389,10 +399,16 @@ export default function DashboardPage() {
   }, [aksiJalan, konfirmasi, muatDaftar]);
 
   const aktif = useMemo(() => (Array.isArray(daftar) ? daftar : []).find((a) => a.id === dipilih) ?? null, [daftar, dipilih]);
-  const totalTerlabel = aktif ? aktif.totalPositif + aktif.totalNegatif + aktif.totalNetral : 0;
+  const ringkasan = useMemo(() => daftar.reduce((total, item) => ({
+    totalUlasan: total.totalUlasan + item.totalUlasan,
+    totalPositif: total.totalPositif + item.totalPositif,
+    totalNegatif: total.totalNegatif + item.totalNegatif,
+    totalNetral: total.totalNetral + item.totalNetral,
+  }), { totalUlasan: 0, totalPositif: 0, totalNegatif: 0, totalNetral: 0 }), [daftar]);
+  const totalTerlabel = ringkasan.totalPositif + ringkasan.totalNegatif + ringkasan.totalNetral;
+  const sisaSemuaUlasan = Math.max(0, ringkasan.totalUlasan - totalTerlabel);
   const sisaUlasan = aktif ? hitungSisaUlasan(aktif) : 0;
-  const hasilTersedia = aktif ? analisisMemilikiHasil(aktif) : false;
-  const hasilParsial = aktif ? aktif.status !== "selesai" : false;
+  const hasilTersedia = ringkasan.totalUlasan > 0;
   const catatanPeringatan = useMemo(() => bersihkanCatatanPeringatan(aktif?.catatan), [aktif?.catatan]);
   const durasiTercatat = useMemo(() => ekstraksiDurasiDariCatatan(aktif?.catatan), [aktif?.catatan]);
 
@@ -771,32 +787,28 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Stat
               label="Total Ulasan"
-              value={aktif.totalUlasan}
-              sub={hasilParsial
-                ? `${aktif.ulasanDiproses} dianalisis · ${sisaUlasan} tersisa`
-                : durasiTercatat
-                  ? `dianalisis dlm ${durasiTercatat}`
-                  : "seluruh data terunggah"}
+              value={ringkasan.totalUlasan}
+              sub={`Seluruh unggahan & sinkronisasi: ${sisaSemuaUlasan} belum berlabel`}
               index={0}
             />
             <Stat
               label="Positif"
-              value={aktif.totalPositif}
-              sub={persen(aktif.totalPositif, totalTerlabel)}
+              value={ringkasan.totalPositif}
+              sub={persen(ringkasan.totalPositif, totalTerlabel)}
               index={1}
               className="border-emerald-200/70"
             />
             <Stat
               label="Netral"
-              value={aktif.totalNetral}
-              sub={persen(aktif.totalNetral, totalTerlabel)}
+              value={ringkasan.totalNetral}
+              sub={persen(ringkasan.totalNetral, totalTerlabel)}
               index={2}
               className="border-amber-200/70"
             />
             <Stat
               label="Negatif"
-              value={aktif.totalNegatif}
-              sub={persen(aktif.totalNegatif, totalTerlabel)}
+              value={ringkasan.totalNegatif}
+              sub={persen(ringkasan.totalNegatif, totalTerlabel)}
               index={3}
               className="border-rose-200/70"
             />
@@ -810,9 +822,9 @@ export default function DashboardPage() {
               </div>
               <div className="mt-6 px-6">
                 <SentimenDonut
-                  positif={aktif.totalPositif}
-                  negatif={aktif.totalNegatif}
-                  netral={aktif.totalNetral}
+                  positif={ringkasan.totalPositif}
+                  negatif={ringkasan.totalNegatif}
+                  netral={ringkasan.totalNetral}
                 />
                 <div className="mt-3 flex justify-center gap-5 text-xs text-muted-foreground">
                   <Legenda warna="bg-emerald-500" label="Positif" />
@@ -829,10 +841,10 @@ export default function DashboardPage() {
               </div>
               <div className="mt-6 px-6">
                 <p className="text-[15px] leading-relaxed">
-                  {aktif.kondisiUmum ?? "Dashboard kondisi umum belum tersedia."}
+                  {`Dari ${ringkasan.totalUlasan.toLocaleString("id-ID")} ulasan seluruh unggahan dan sinkronisasi, ${ringkasan.totalPositif.toLocaleString("id-ID")} berlabel positif, ${ringkasan.totalNetral.toLocaleString("id-ID")} netral, dan ${ringkasan.totalNegatif.toLocaleString("id-ID")} negatif.`}
                 </p>
                 <div className="mt-6 space-y-2 text-sm">
-                  <BarisRingkas label="Ulasan belum dianalisis" nilai={String(sisaUlasan)} />
+                  <BarisRingkas label="Ulasan belum berlabel" nilai={String(sisaSemuaUlasan)} />
                   <BarisRingkas label="Sumber label" nilai="AI Gateway + fallback rating" />
                 </div>
               </div>

@@ -41,14 +41,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   let query = supabase
     .from(ulasan)
     .select("tanggal_ulasan,sentimen")
-    .eq("analisis_id", analisisId)
     .not("tanggal_ulasan", "is", null);
+  if (url.searchParams.get("cakupan") !== "semua") query = query.eq("analisis_id", analisisId);
   if (dari) query = query.gte("tanggal_ulasan", new Date(`${dari}T00:00:00+07:00`).toISOString());
   if (sampai) query = query.lte("tanggal_ulasan", new Date(`${sampai}T23:59:59.999+07:00`).toISOString());
 
-  const { data, error } = await query.order("tanggal_ulasan", { ascending: true });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const rows = toCamel<Pick<UlasanRow, "tanggalUlasan" | "sentimen">[]>(data ?? []);
+  const rows: Pick<UlasanRow, "tanggalUlasan" | "sentimen">[] = [];
+  // Read every page; Supabase limits a response to 1,000 rows by default.
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await query
+      .order("tanggal_ulasan", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + 999);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    rows.push(...toCamel<Pick<UlasanRow, "tanggalUlasan" | "sentimen">[]>(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
 
   const perHari = new Map<string, { positif: number; negatif: number; netral: number }>();
   for (const row of rows) {
@@ -76,7 +84,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (keys.length > 0) {
     const cursor = new Date(`${keys[0]}T00:00:00Z`);
     const akhir = new Date(`${keys[keys.length - 1]}T00:00:00Z`);
-    while (cursor <= akhir && points.length < 400) {
+    while (cursor <= akhir) {
       const tanggal = cursor.toISOString().slice(0, 10);
       const nilai = perHari.get(tanggal) ?? { positif: 0, negatif: 0, netral: 0 };
       const total = nilai.positif + nilai.negatif + nilai.netral;
