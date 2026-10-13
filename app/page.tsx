@@ -4,10 +4,8 @@ import { SCRAPING_PERIODS, type PeriodeScraping } from "@/lib/scraping-periods";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDownRight,
   ArrowRight,
   ArrowsClockwise,
-  ArrowUpRight,
   Broom,
   CaretDown,
   Chats,
@@ -17,7 +15,6 @@ import {
   Clock,
   Download,
   Info,
-  Minus,
   SpinnerGap,
   StopCircle,
   Tag,
@@ -38,10 +35,10 @@ import { PageHeader } from "@/components/page-header";
 import { Stat } from "@/components/metric";
 import { EmptyState, LoadingSection } from "@/components/states";
 import { SentimenDonut } from "@/components/sentimen-donut";
+import { PerbandinganPeriode } from "@/components/perbandingan-periode";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,7 +49,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
-  formatTanggal,
   formatDurasi,
   ekstraksiDurasiDariCatatan,
   bersihkanCatatanPeringatan,
@@ -74,8 +70,6 @@ export default function DashboardPage() {
   const [daftar, setDaftar] = useState<AnalisisItem[]>([]);
   const [memuat, setMemuat] = useState(true);
   const [dipilih, setDipilih] = useState<number | null>(null);
-  const [periodeA, setPeriodeA] = useState<number | null>(null);
-  const [periodeB, setPeriodeB] = useState<number | null>(null);
   const [prosesUlangJalan, setProsesUlangJalan] = useState(false);
   const [pesanProsesUlang, setPesanProsesUlang] = useState<string | null>(null);
   const [hentikanJalan, setHentikanJalan] = useState(false);
@@ -126,15 +120,7 @@ export default function DashboardPage() {
         setDaftar(list);
         const berjalan = list.find((a) => a.status === "berjalan");
         const terbaruDenganHasil = list.find(analisisMemilikiHasil);
-        const selesai = list.filter((a) => a.status === "selesai");
         setDipilih(berjalan?.id ?? terbaruDenganHasil?.id ?? list[0]?.id ?? null);
-        if (selesai.length >= 2) {
-          setPeriodeA(selesai[1].id);
-          setPeriodeB(selesai[0].id);
-        } else if (selesai.length === 1) {
-          setPeriodeA(selesai[0].id);
-          setPeriodeB(selesai[0].id);
-        }
       })
       .catch(() => setDaftar([]))
       .finally(() => setMemuat(false));
@@ -412,14 +398,6 @@ export default function DashboardPage() {
   const catatanPeringatan = useMemo(() => bersihkanCatatanPeringatan(aktif?.catatan), [aktif?.catatan]);
   const durasiTercatat = useMemo(() => ekstraksiDurasiDariCatatan(aktif?.catatan), [aktif?.catatan]);
 
-  const selesaiUrutWaktu = useMemo(
-    () =>
-      [...daftar]
-        .filter((a) => a.status === "selesai")
-        .sort((a, b) => new Date(a.tanggalUnggah).getTime() - new Date(b.tanggalUnggah).getTime()),
-    [daftar]
-  );
-
   const dataGrafik = useMemo(
     () => trendPoints.map((point) => ({
       ...point,
@@ -429,9 +407,6 @@ export default function DashboardPage() {
     })),
     [trendPoints]
   );
-
-  const itemA = useMemo(() => daftar.find((a) => a.id === periodeA), [daftar, periodeA]);
-  const itemB = useMemo(() => daftar.find((a) => a.id === periodeB), [daftar, periodeB]);
 
   if (memuat) {
     return <LoadingSection rows={2} />;
@@ -499,6 +474,7 @@ export default function DashboardPage() {
             </Button>
           }
         />
+        <PerbandinganPeriode key={rumahSakitId} rumahSakitId={rumahSakitId} />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {[
             {
@@ -753,6 +729,7 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {!hasilTersedia && <PerbandinganPeriode key={rumahSakitId} rumahSakitId={rumahSakitId} />}
       {hasilTersedia && (
         <>
           {aktif.status === "selesai" && catatanPeringatan && (
@@ -882,34 +859,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {selesaiUrutWaktu.length >= 2 && (
-            <div className="mt-6 reveal rounded-xl border border-border bg-card py-6" style={{ animationDelay: "240ms" }}>
-              <div className="px-6">
-                <h3 className="text-sm font-semibold leading-none tracking-tight">Perbandingan Periode</h3>
-                <p className="mt-1.5 text-xs text-muted-foreground">Pilih dua periode untuk melihat selisih jumlah sentimen.</p>
-              </div>
-              <div className="mt-6 space-y-4 px-6">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5 text-xs">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Periode awal</span>
-                    <PeriodeSelect daftar={selesaiUrutWaktu} dipilih={periodeA} onChange={setPeriodeA} />
-                  </div>
-                  <div className="space-y-1.5 text-xs">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Periode pembanding</span>
-                    <PeriodeSelect daftar={selesaiUrutWaktu} dipilih={periodeB} onChange={setPeriodeB} />
-                  </div>
-                </div>
-
-                {itemA && itemB && (
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <KartuSelisih label="Positif" awal={itemA.totalPositif} akhir={itemB.totalPositif} baikJikaNaik index={0} />
-                    <KartuSelisih label="Netral" awal={itemA.totalNetral} akhir={itemB.totalNetral} netral index={1} />
-                    <KartuSelisih label="Negatif" awal={itemA.totalNegatif} akhir={itemB.totalNegatif} index={2} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          <PerbandinganPeriode key={rumahSakitId} rumahSakitId={rumahSakitId} />
 
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             {[
@@ -934,100 +884,6 @@ export default function DashboardPage() {
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-function PeriodeSelect({
-  daftar,
-  dipilih,
-  onChange,
-}: {
-  daftar: AnalisisItem[];
-  dipilih: number | null;
-  onChange: (id: number) => void;
-}) {
-  if (daftar.length === 0) {
-    return (
-      <Select disabled>
-        <SelectTrigger className="w-full h-9 text-xs">
-          <SelectValue placeholder="Belum ada periode selesai" />
-        </SelectTrigger>
-      </Select>
-    );
-  }
-
-  return (
-    <Select
-      value={dipilih ? String(dipilih) : ""}
-      onValueChange={(val) => onChange(Number(val))}
-    >
-      <SelectTrigger className="w-full bg-card shadow-xs h-9 text-xs">
-        <SelectValue placeholder="Pilih Periode" />
-      </SelectTrigger>
-      <SelectContent align="start">
-        {daftar.map((item) => (
-          <SelectItem key={item.id} value={String(item.id)}>
-            {formatTanggal(item.tanggalUnggah)} · {item.namaFile}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-function KartuSelisih({
-  label,
-  awal,
-  akhir,
-  baikJikaNaik = false,
-  netral = false,
-  index = 0,
-}: {
-  label: string;
-  awal: number;
-  akhir: number;
-  baikJikaNaik?: boolean;
-  netral?: boolean;
-  index?: number;
-}) {
-  const selisih = akhir - awal;
-  const naik = selisih > 0;
-  const turun = selisih < 0;
-
-  const arahWarna = netral
-    ? "text-muted-foreground"
-    : naik
-      ? baikJikaNaik
-        ? "text-emerald-600"
-        : "text-rose-600"
-      : turun
-        ? baikJikaNaik
-          ? "text-rose-600"
-          : "text-emerald-600"
-        : "text-muted-foreground";
-
-  return (
-    <div className="reveal rounded-xl border border-border bg-background/60 px-5 py-4" style={{ animationDelay: `${index * 60}ms` }}>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-      <div className="mt-2 font-mono text-xl font-bold tabular-nums">
-        {awal} <span className="text-muted-foreground text-sm font-normal">→</span> {akhir}
-      </div>
-      <p className={cn("mt-1 flex items-center gap-1 text-xs font-semibold", arahWarna)}>
-        {selisih === 0 ? (
-          <>
-            <Minus className="size-3.5" /> Tidak berubah
-          </>
-        ) : naik ? (
-          <>
-            <ArrowUpRight className="size-3.5" /> +{selisih}
-          </>
-        ) : (
-          <>
-            <ArrowDownRight className="size-3.5" /> {selisih}
-          </>
-        )}
-      </p>
     </div>
   );
 }
