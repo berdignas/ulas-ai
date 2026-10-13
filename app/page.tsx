@@ -36,6 +36,7 @@ import { Stat } from "@/components/metric";
 import { EmptyState, LoadingSection } from "@/components/states";
 import { SentimenDonut } from "@/components/sentimen-donut";
 import { PerbandinganPeriode } from "@/components/perbandingan-periode";
+import { KondisiLayanan } from "@/components/kondisi-layanan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -811,21 +812,8 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="reveal rounded-xl border border-border bg-card py-6 lg:col-span-3" style={{ animationDelay: "180ms" }}>
-              <div className="px-6">
-                <h3 className="text-sm font-semibold leading-none tracking-tight">Kondisi Umum Layanan</h3>
-                <p className="mt-1.5 text-xs text-muted-foreground">Dashboard kondisi layanan berdasarkan hasil analisis.</p>
-              </div>
-              <div className="mt-6 px-6">
-                <p className="text-[15px] leading-relaxed">
-                  {`Dari ${ringkasan.totalUlasan.toLocaleString("id-ID")} ulasan seluruh unggahan dan sinkronisasi, ${ringkasan.totalPositif.toLocaleString("id-ID")} berlabel positif, ${ringkasan.totalNetral.toLocaleString("id-ID")} netral, dan ${ringkasan.totalNegatif.toLocaleString("id-ID")} negatif.`}
-                </p>
-                <div className="mt-6 space-y-2 text-sm">
-                  <BarisRingkas label="Ulasan belum berlabel" nilai={String(sisaSemuaUlasan)} />
-                  <BarisRingkas label="Sumber label" nilai="AI Gateway + fallback rating" />
-                </div>
-              </div>
-            </div>
+            <KondisiLayanan key={rumahSakitId} rumahSakitId={rumahSakitId}
+              revision={daftar.map((item) => `${item.id}:${item.status}:${item.ulasanDiproses}:${item.totalPositif}:${item.totalNegatif}:${item.totalNetral}`).join("|")} />
           </div>
 
           <div className="mt-6 reveal rounded-xl border border-border bg-card py-6" style={{ animationDelay: "200ms" }}>
@@ -899,14 +887,5 @@ function Legenda({ warna, label }: { warna: string; label: string }) {
       <span className={`size-2.5 rounded-full ${warna}`} />
       {label}
     </span>
-  );
-}
-
-function BarisRingkas({ label, nilai }: { label: string; nilai: string }) {
-  return (
-    <div className="flex items-center justify-between border-b border-border pb-2 last:border-0">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono font-medium tabular-nums">{nilai}</span>
-    </div>
   );
 }
